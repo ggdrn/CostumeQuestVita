@@ -124,6 +124,7 @@ set(SOURCES
     source/reimpl/errno.c
     source/reimpl/fdcache.c
     source/reimpl/heapguard.c
+    source/reimpl/fastheap.c
     source/reimpl/io.c
     source/reimpl/log.c
     source/reimpl/mem.c

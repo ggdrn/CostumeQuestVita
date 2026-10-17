@@ -23,6 +23,7 @@ extern "C" {
 extern int setting_msaa;     // 0, 2 or 4 (applied at boot)
 extern int setting_fps_cap;  // 60, 45, 30 or 0 (unlimited)
 extern int setting_profiler; // game stage timings in debug.log
+extern int setting_fast_alloc; // "allocator fast" (1) or "newlib" (0), at boot
 
 void settings_load();
 void settings_save();

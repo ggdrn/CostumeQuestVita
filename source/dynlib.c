@@ -47,6 +47,7 @@
 #include "reimpl/errno.h"
 #include "reimpl/io.h"
 #include "utils/waitstats.h"
+#include "reimpl/fastheap.h"
 #include "reimpl/fdcache.h"
 #include "reimpl/log.h"
 #include "reimpl/mem.h"
@@ -139,7 +140,7 @@ void *heapguard_realloc(void *p, size_t size);
 void heapguard_free(void *p);
 #define HEAP(f) heapguard_##f
 #else
-#define HEAP(f) f
+#define HEAP(f) fastheap_##f
 #endif
 
 // gl_census.c: texture formats / vertex layouts used by the game (-DGL_CENSUS=ON)

@@ -14,6 +14,7 @@
 #include "utils/logger.h"
 #include "utils/utils.h"
 #include "utils/settings.h"
+#include "reimpl/fastheap.h"
 
 #include <reimpl/controls.h>
 
@@ -120,6 +121,7 @@ void soloader_init_all() {
                        so_entries[i].mod->load_addr, so_entries[i].mod->text_base, so_entries[i].mod->text_size);
 
     settings_load();
+    fastheap_init();
     sceIoMkdir(DATA_PATH "save", 0777); // the game's _write folder (see reimpl/io.c)
     l_success("Settings loaded.");
 

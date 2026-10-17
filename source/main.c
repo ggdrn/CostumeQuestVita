@@ -1,5 +1,6 @@
 #include "utils/waitstats.h"
 #include "utils/markers.h"
+#include "reimpl/fastheap.h"
 #include "utils/init.h"
 #include "utils/glutil.h"
 #include "utils/logger.h"
@@ -84,6 +85,19 @@ static int heartbeat_thread(SceSize args, void *argp) {
         extern volatile uint64_t frame_work_us, frame_swap_us;
         uint32_t frames = frame_count;
         markers_log(frames, 5 * 1000 * 1000);
+        {
+            static uint32_t last_allocs, last_frees;
+            uint32_t allocs = fastheap_stats.allocs, frees = fastheap_stats.frees;
+            uint32_t f = frames ? frames : 1;
+            filelog_printf("heartbeat: heap %u allocs + %u frees per frame (%u%% small), main thread %u.%u ms/frame in them, arena %u MB\n",
+                           (allocs - last_allocs) / f, (frees - last_frees) / f,
+                           allocs ? (unsigned)((uint64_t)fastheap_stats.small * 100 / allocs) : 0,
+                           (unsigned)(fastheap_stats.main_us / f / 1000), (unsigned)(fastheap_stats.main_us / f / 100 % 10),
+                           (unsigned)(fastheap_arena_used() >> 20));
+            last_allocs = allocs;
+            last_frees = frees;
+            fastheap_stats.main_us = 0;
+        }
         if (frames) {
             filelog_printf("heartbeat: %u.%u fps, frame avg %u ms (game %u ms + swap %u ms), worst %u ms\n",
                            frames / 5, (frames * 10 / 5) % 10,
