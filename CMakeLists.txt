@@ -256,16 +256,25 @@ if (HEAPGUARD)
 endif()
 
 vita_create_self(eboot.bin ${CMAKE_PROJECT_NAME} UNSAFE NOASLR)
+
+# LiveArea art: build-vita.sh makes it from the user's APK into build/livearea
+# (game artwork, never committed); otherwise the placeholders in extras/
+if(EXISTS ${CMAKE_SOURCE_DIR}/build/livearea/icon0.png)
+  set(LIVEAREA_DIR ${CMAKE_SOURCE_DIR}/build/livearea)
+else()
+  set(LIVEAREA_DIR ${CMAKE_SOURCE_DIR}/extras/livearea)
+endif()
+message(STATUS "LiveArea images: ${LIVEAREA_DIR}")
 vita_create_vpk(${VITA_VPKNAME}.vpk ${VITA_TITLEID} eboot.bin
                 VERSION ${VITA_VERSION}
                 NAME ${VITA_APP_NAME}
                 FILE ${CMAKE_SOURCE_DIR}/extras/cpuinfo cpuinfo
                 ${CMAKE_SOURCE_DIR}/extras/meminfo meminfo
                 ${CMAKE_SOURCE_DIR}/extras/urandom urandom
-                ${CMAKE_SOURCE_DIR}/extras/livearea/icon0.png sce_sys/icon0.png
-                ${CMAKE_SOURCE_DIR}/extras/livearea/pic0.png sce_sys/pic0.png
-                ${CMAKE_SOURCE_DIR}/extras/livearea/startup.png sce_sys/livearea/contents/startup.png
-                ${CMAKE_SOURCE_DIR}/extras/livearea/bg0.png sce_sys/livearea/contents/bg0.png
+                ${LIVEAREA_DIR}/icon0.png sce_sys/icon0.png
+                ${LIVEAREA_DIR}/pic0.png sce_sys/pic0.png
+                ${LIVEAREA_DIR}/startup.png sce_sys/livearea/contents/startup.png
+                ${LIVEAREA_DIR}/bg0.png sce_sys/livearea/contents/bg0.png
                 ${CMAKE_SOURCE_DIR}/extras/livearea/template.xml sce_sys/livearea/contents/template.xml
                 )
 

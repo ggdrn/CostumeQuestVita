@@ -61,6 +61,24 @@ de buffer) e o pior quadro a cada 5 s.
 
 O vitaGL é compilado a partir de `lib/vitagl` com `SOFTFP_ABI=1`.
 
+### Arte da LiveArea
+
+O `build-vita.sh` monta o ícone, a tela de boot e a LiveArea a partir do
+**seu** APK (`CostumeQuestPowerVR.apk` ao lado desta pasta, ou o caminho em
+`CQ_APK`), usando `extras/scripts/livearea_from_apk.py`:
+
+| Imagem | Origem no APK |
+| --- | --- |
+| `icon0.png` | ícone do launcher Android (`res/drawable-xxhdpi-v4/ic_launcher.png`) |
+| `pic0.png` | tela de loading do bairro (textura do jogo) |
+| `bg0.png` | fundo do menu principal (textura do jogo) |
+| `startup.png` | logo "Costume Quest" (`Data/PS3/ICON0.PNG`) sobre o fundo do menu |
+
+A arte é da Double Fine: ela vai para `build/livearea/`, que o git ignora, e
+nunca entra no repositório. Sem o APK, o build usa as imagens provisórias de
+`extras/livearea/`. O VPK gerado com a arte é só para uso pessoal. Na VM o
+script precisa do Pillow (`sudo apt install python3-pil`).
+
 ## Instalação no Vita
 
 Basta copiar o APK original:
