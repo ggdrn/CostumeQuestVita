@@ -27,6 +27,9 @@ typedef struct {
     volatile uint32_t reads;        // read() calls from the .so
     volatile uint32_t refills;      // actual reads from the card
     volatile uint64_t refill_us;    // time spent in them
+    volatile uint64_t card_bytes;   // bytes they returned
+    volatile uint32_t hits;         // reads served from cached blocks
+    volatile uint32_t direct;       // big reads sent straight to the card
     volatile uint64_t bytes;        // bytes returned to the .so
     volatile uint32_t seeks;        // lseek() calls from the .so
     volatile int last_fd;

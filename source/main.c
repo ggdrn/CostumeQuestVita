@@ -1,3 +1,4 @@
+#include "utils/waitstats.h"
 #include "utils/init.h"
 #include "utils/glutil.h"
 #include "utils/logger.h"
@@ -89,6 +90,8 @@ static int heartbeat_thread(SceSize args, void *argp) {
                            frame_max_us / 1000);
         }
         profiler_log(5 * 1000 * 1000);
+        waitstats_log(5 * 1000 * 1000);
+        gpustats_log();
         frame_count = 0;
         frame_work_us = 0;
         frame_swap_us = 0;
@@ -96,10 +99,12 @@ static int heartbeat_thread(SceSize args, void *argp) {
 
         uint32_t reads = fdcache_stats.reads;
         uint32_t refills = fdcache_stats.refills;
-        filelog_printf("heartbeat: read() %u (+%u), card reads %u (avg %u us), %u KB, lseek() %u, last fd %d pos %lld\n",
+        filelog_printf("heartbeat: read() %u (+%u), card reads %u (avg %u us, %u direct), cache hits %u, "
+                       "game got %u KB / card gave %u KB, lseek() %u, last fd %d pos %lld\n",
                        reads, reads - last_reads, refills,
-                       refills ? (unsigned)(fdcache_stats.refill_us / refills) : 0,
-                       (unsigned)(fdcache_stats.bytes / 1024), fdcache_stats.seeks,
+                       refills ? (unsigned)(fdcache_stats.refill_us / refills) : 0, fdcache_stats.direct,
+                       fdcache_stats.hits, (unsigned)(fdcache_stats.bytes / 1024),
+                       (unsigned)(fdcache_stats.card_bytes / 1024), fdcache_stats.seeks,
                        fdcache_stats.last_fd, (long long)fdcache_stats.last_pos);
         last_reads = reads;
 
@@ -120,6 +125,7 @@ static int heartbeat_thread(SceSize args, void *argp) {
 static void *sdl_main_thread(void *arg) {
     // SDLMain.run(): SDL_Android_Init + SDL_main, never returns while the game runs
     profiler_register_thread(sceKernelGetThreadId(), "SDL/game main");
+    waitstats_set_main_thread(sceKernelGetThreadId());
     void (*Java_SDLActivity_nativeInit)(JNIEnv *env, jclass cls) =
         (void *)so_symbol(&so_mod, "Java_org_libsdl_app_SDLActivity_nativeInit");
 

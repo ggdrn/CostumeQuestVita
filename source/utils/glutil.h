@@ -27,6 +27,9 @@ void gl_preload();
 
 void gl_swap();
 
+// Logs GPU frame times since the last call (heartbeat)
+void gpustats_log();
+
 void glCompileShader_soloader(GLuint shader);
 
 void glShaderSource_soloader(GLuint shader, GLsizei count,

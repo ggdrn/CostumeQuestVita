@@ -127,6 +127,8 @@ static ssize_t timed_pread(int fd, void *buf, size_t count, off_t offset) {
         r = read(fd, buf, count);
     fdcache_stats.refills++;
     fdcache_stats.refill_us += sceKernelGetProcessTimeWide() - t;
+    if (r > 0)
+        fdcache_stats.card_bytes += r;
     return r;
 }
 
@@ -138,6 +140,7 @@ static FdBlock *get_block(int fd, FdCache *c, off_t pos) {
     for (int i = 0; i < FDCACHE_BLOCKS; i++) {
         FdBlock *b = &c->blocks[i];
         if (b->start == start) {
+            fdcache_stats.hits++;
             b->last_use = ++c->tick;
             return b;
         }
@@ -180,6 +183,7 @@ ssize_t read_soloader(int fd, void *buf, size_t count) {
     while (done < count) {
         // Big reads go straight to the card
         if (count - done >= FDCACHE_BLOCK_SIZE) {
+            fdcache_stats.direct++;
             ssize_t r = timed_pread(fd, (uint8_t *)buf + done, count - done, c->pos);
             if (r <= 0)
                 break;

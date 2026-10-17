@@ -8,6 +8,8 @@
  * of the MIT license. See the LICENSE file for details.
  */
 
+#include "utils/waitstats.h"
+#include <errno.h>
 #include "reimpl/pthr.h"
 
 #include <stdlib.h>
@@ -303,7 +305,7 @@ int pthread_mutex_unlock_soloader(pthread_mutex_t_bionic *mutex)
 
 int pthread_join_soloader(pthread_t thread, void **value_ptr)
 {
-    return pthread_join(thread, value_ptr);
+    return WAITSTATS_TIMED(WAIT_JOIN, pthread_join(thread, value_ptr));
 }
 
 int pthread_condattr_init_soloader(pthread_condattr_t *attr)
@@ -352,7 +354,7 @@ int pthread_cond_timedwait_soloader(pthread_cond_t_bionic *cond, pthread_mutex_t
     _cond_t_static_init(cond, NULL);
     _mutex_t_static_init(mutex, NULL);
 
-    return pthread_cond_timedwait(cond->real_ptr, mutex->real_ptr, abstime);
+    return WAITSTATS_TIMED(WAIT_COND, pthread_cond_timedwait(cond->real_ptr, mutex->real_ptr, abstime));
 }
 
 
@@ -363,7 +365,7 @@ int pthread_cond_wait_soloader(pthread_cond_t_bionic *cond, pthread_mutex_t_bion
     _cond_t_static_init(cond, NULL);
     _mutex_t_static_init(mutex, NULL);
 
-    return pthread_cond_wait(cond->real_ptr, mutex->real_ptr);
+    return WAITSTATS_TIMED(WAIT_COND, pthread_cond_wait(cond->real_ptr, mutex->real_ptr));
 }
 
 int pthread_cond_broadcast_soloader(pthread_cond_t_bionic *cond)
@@ -503,18 +505,22 @@ int sem_post_soloader (int * uid) {
     return 0;
 }
 
-int sem_timedwait_soloader (int * uid, const struct timespec * abstime) {
-    uint timeout = 1000;
-    if (sceKernelWaitSema(*uid, 1, &timeout) >= 0)
-        return 0;
-    if (!abstime) return -1;
+static int sem_timedwait_impl(int * uid, const struct timespec * abstime) {
+    if (!abstime)
+        return sceKernelWaitSema(*uid, 1, NULL) < 0 ? -1 : 0;
+    // abstime is on the realtime clock (gettimeofday)
     long long now = (long long) current_timestamp_ms() * 1000; // us
-    long long _timeout = abstime->tv_sec * 1000 * 1000 + abstime->tv_nsec / 1000; // us
-    if (_timeout-now >= 0) return -1;
-    uint timeout_real = _timeout - now;
-    if (sceKernelWaitSema(*uid, 1, &timeout_real) < 0)
+    long long deadline = (long long)abstime->tv_sec * 1000 * 1000 + abstime->tv_nsec / 1000; // us
+    SceUInt timeout = deadline > now ? (SceUInt)(deadline - now) : 0;
+    if (sceKernelWaitSema(*uid, 1, &timeout) < 0) {
+        errno = ETIMEDOUT;
         return -1;
+    }
     return 0;
+}
+
+int sem_timedwait_soloader (int * uid, const struct timespec * abstime) {
+    return WAITSTATS_TIMED(WAIT_SEM, sem_timedwait_impl(uid, abstime));
 }
 
 int sem_trywait_soloader (int * uid) {
@@ -525,7 +531,5 @@ int sem_trywait_soloader (int * uid) {
 }
 
 int sem_wait_soloader (int * uid) {
-    if (sceKernelWaitSema(*uid, 1, NULL) < 0)
-        return -1;
-    return 0;
+    return WAITSTATS_TIMED(WAIT_SEM, sceKernelWaitSema(*uid, 1, NULL) < 0 ? -1 : 0);
 }

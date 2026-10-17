@@ -46,6 +46,7 @@
 
 #include "reimpl/errno.h"
 #include "reimpl/io.h"
+#include "utils/waitstats.h"
 #include "reimpl/fdcache.h"
 #include "reimpl/log.h"
 #include "reimpl/mem.h"
@@ -977,7 +978,7 @@ so_default_dynlib default_dynlib[] = {
 
         { "sched_get_priority_max", (uintptr_t)&sched_get_priority_max },
         { "sched_get_priority_min", (uintptr_t)&sched_get_priority_min },
-        { "sched_yield", (uintptr_t)&sched_yield },
+        { "sched_yield", (uintptr_t)&sched_yield_soloader },
 
 
         // wchar, wctype
@@ -1100,7 +1101,7 @@ so_default_dynlib default_dynlib[] = {
         { "localtime_r", (uintptr_t)&localtime_r },
         { "mktime", (uintptr_t)&mktime },
         { "mktime64", (uintptr_t)&mktime64 },
-        { "nanosleep", (uintptr_t)&nanosleep },
+        { "nanosleep", (uintptr_t)&nanosleep_soloader },
         { "strftime", (uintptr_t)&strftime },
         { "time", (uintptr_t)&time },
         { "tzset", (uintptr_t)&tzset },
@@ -1123,7 +1124,7 @@ so_default_dynlib default_dynlib[] = {
         { "exit", (uintptr_t)&exit_soloader },
         { "lrand48", (uintptr_t)&lrand48 },
         { "prctl", (uintptr_t)&ret0 },
-        { "sleep", (uintptr_t)&sleep },
+        { "sleep", (uintptr_t)&sleep_soloader },
         { "srand48", (uintptr_t)&srand48 },
         { "strtod", (uintptr_t)&strtod },
         { "strtof", (uintptr_t)&strtof },
@@ -1134,7 +1135,7 @@ so_default_dynlib default_dynlib[] = {
         { "strtoul", (uintptr_t)&strtoul },
         { "strtoull", (uintptr_t)&strtoull },
         { "strtoumax", (uintptr_t)&strtoumax },
-        { "usleep", (uintptr_t)&usleep },
+        { "usleep", (uintptr_t)&usleep_soloader },
 
         #ifdef USE_SCELIBC_IO
             { "qsort", (uintptr_t)&sceLibcBridge_qsort },

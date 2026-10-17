@@ -122,7 +122,7 @@ linha no formato `chave valor`:
 | Chave | Valores | Padrão | Efeito |
 | --- | --- | --- | --- |
 | `msaa` | 0, 2, 4 | 2 | Antisserrilhado; 0 alivia a GPU. Vale no próximo boot |
-| `fps_cap` | 60, 45, 30, 0 | 60 | Limite de FPS. 60/30 com vsync; 45 e 0 (sem limite) sem vsync |
+| `fps_cap` | 60, 45, 30, 0 | 60 | Limite de FPS. 60 e 30 travados no vsync (1 ou 2 refreshes por quadro); 45 e 0 (sem limite) sem vsync |
 
 ## Controles
 

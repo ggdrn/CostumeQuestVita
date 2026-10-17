@@ -133,6 +133,7 @@ set(SOURCES
     source/utils/dialog.c
     source/utils/filelog.c
     source/utils/profiler.c
+    source/utils/waitstats.c
     source/utils/glutil.c
     source/utils/init.c
     source/utils/logger.c

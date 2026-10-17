@@ -19,6 +19,9 @@
 #include <string.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/io/stat.h>
+#include <psp2/kernel/processmgr.h>
+
+#include "utils/filelog.h"
 
 // Helpers for our handling of shaders
 GLboolean skip_next_compile = GL_FALSE;
@@ -37,6 +40,8 @@ void gl_preload() {
 #endif
 }
 
+static void gpu_done_cb(void *framebuf); // GPU timing, below
+
 void gl_init() {
     // The game (mostly its Scaleform UI) patches many vertex layout variants
     // that vitaGL never releases; the default 1MB pools run out on the menu
@@ -45,9 +50,51 @@ void gl_init() {
     vglInitExtended(0, 960, 544, 6 * 1024 * 1024,
                     setting_msaa == 4 ? SCE_GXM_MULTISAMPLE_4X :
                     setting_msaa == 2 ? SCE_GXM_MULTISAMPLE_2X : SCE_GXM_MULTISAMPLE_NONE);
+    vglSetDisplayCallback(gpu_done_cb);
+}
+
+/*
+ * GPU timing: gl_swap stamps each frame as it is submitted, and vitaGL's
+ * display queue callback runs once the GPU has finished that frame (frames
+ * complete in order). Submit -> done is the GPU time, plus the wait behind
+ * earlier frames when the GPU is the bottleneck.
+ */
+#define GPU_RING 8
+static volatile uint64_t gpu_submit[GPU_RING];
+static volatile uint32_t gpu_head, gpu_tail;
+static volatile uint64_t gpu_lat_us, gpu_lat_max_us;
+static volatile uint32_t gpu_frames;
+
+static void gpu_done_cb(void *framebuf) {
+    uint64_t now = sceKernelGetProcessTimeWide();
+    if (gpu_tail == gpu_head)
+        return;
+    uint32_t lat = (uint32_t)(now - gpu_submit[gpu_tail % GPU_RING]);
+    gpu_tail++;
+    gpu_lat_us += lat;
+    if (lat > gpu_lat_max_us)
+        gpu_lat_max_us = lat;
+    gpu_frames++;
+}
+
+void gpustats_log() {
+    uint32_t frames = gpu_frames;
+    if (!frames)
+        return;
+    filelog_printf("heartbeat: gpu submit->done avg %u.%u ms, worst %u ms (%u frames)\n",
+                   (unsigned)(gpu_lat_us / frames / 1000), (unsigned)(gpu_lat_us / frames / 100 % 10),
+                   (unsigned)(gpu_lat_max_us / 1000), frames);
+    gpu_lat_us = 0;
+    gpu_lat_max_us = 0;
+    gpu_frames = 0;
 }
 
 void gl_swap() {
+    // Never more than GPU_RING frames in flight (vitaGL keeps 2 pending)
+    if (gpu_head - gpu_tail < GPU_RING) {
+        gpu_submit[gpu_head % GPU_RING] = sceKernelGetProcessTimeWide();
+        gpu_head++;
+    }
     vglSwapBuffers(GL_FALSE);
 }
 

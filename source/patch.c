@@ -174,19 +174,17 @@ void SDL_EGL_SwapBuffers_hook(void *_this, void *egl_surface) {
 	static int applied_cap = -1;
 	uint64_t start = sceKernelGetProcessTimeWide();
 
-	// Frame cap: 60 and 30 stay on vsync (30 = sleep to 33.3ms, then vsync);
-	// 45 can't be a multiple of the 60Hz display, so it and 0 (unlimited)
-	// run without vsync.
+	// Frame cap: 60 and 30 are vsync intervals 1 and 2 (each frame held for
+	// one / two 60Hz refreshes). 45 can't be a multiple of the display rate,
+	// so it is paced by sleeping, without vsync, like 0 (unlimited).
 	if (applied_cap != setting_fps_cap) {
+		extern uint32_t vsync_interval; // vitaGL
 		applied_cap = setting_fps_cap;
-		vglWaitVblankStart(setting_fps_cap == 60 || setting_fps_cap == 30);
+		vsync_interval = setting_fps_cap == 60 ? 1 : setting_fps_cap == 30 ? 2 : 0;
 	}
-	if (last_swap_end && (setting_fps_cap == 30 || setting_fps_cap == 45)) {
-		uint64_t interval = 1000000 / setting_fps_cap;
+	if (last_swap_end && setting_fps_cap == 45) {
+		uint64_t interval = 1000000 / 45;
 		uint64_t elapsed = start - last_swap_end;
-		// A bit early for 30: the vsync wait completes the frame
-		if (setting_fps_cap == 30)
-			interval -= 4000;
 		if (elapsed < interval)
 			sceKernelDelayThread((SceUInt)(interval - elapsed));
 	}
