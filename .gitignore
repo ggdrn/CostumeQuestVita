@@ -1,0 +1,24 @@
+# Build output (VPKs, debug logs and config.txt copied back from the Vita)
+build/*
+cmake-build-*/
+*.vpk
+*.log
+
+# Game files: never commit anything taken from the APK
+apk/
+*.apk
+*.so
+*.gfx
+*.fsb
+*.fev
+
+# vitaGL is vendored with local patches: keep its source, not its build
+lib/vitagl/**/*.o
+lib/vitagl/libvitaGL.a
+lib/vitagl/samples/
+lib/libc_bridge/out/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

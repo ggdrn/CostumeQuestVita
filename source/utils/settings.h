@@ -1,0 +1,34 @@
+/*
+ * Copyright (C) 2022-2023 Volodymyr Atamanenko
+ *
+ * This software may be modified and distributed under the terms
+ * of the MIT license. See the LICENSE file for details.
+ */
+
+/**
+ * @file  settings.h
+ * @brief Loader settings that can be set via a configurator app.
+ */
+
+#ifndef SOLOADER_SETTINGS_H
+#define SOLOADER_SETTINGS_H
+
+#include "stdbool.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// ux0:data/costumequest/config.txt, "key value" per line
+extern int setting_msaa;     // 0, 2 or 4 (applied at boot)
+extern int setting_fps_cap;  // 60, 45, 30 or 0 (unlimited)
+
+void settings_load();
+void settings_save();
+void settings_reset();
+
+#ifdef __cplusplus
+};
+#endif
+
+#endif // SOLOADER_SETTINGS_H
