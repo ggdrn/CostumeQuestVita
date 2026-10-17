@@ -100,8 +100,11 @@ int open_soloader(const char * path, int oflag, ...) {
     int read_only = (oflag & 3) == 0; // O_RDONLY, bionic access mode bits
     oflag = oflags_bionic_to_newlib(oflag);
     int ret = open(path, oflag, mode);
-    if (ret >= 0 && read_only)
+    if (ret >= 0 && read_only) {
         fdcache_attach(ret);
+        if (strcmp(path, APK_PATH) == 0)
+            fdcache_mark_apk(ret);
+    }
     if (ret >= 0)
         l_debug("open(%s, %x): %i", path, oflag, ret);
     else

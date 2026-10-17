@@ -15,6 +15,7 @@
 #include "utils/utils.h"
 #include "utils/settings.h"
 #include "reimpl/fastheap.h"
+#include "apk_index.h"
 
 #include <reimpl/controls.h>
 
@@ -122,6 +123,7 @@ void soloader_init_all() {
 
     settings_load();
     fastheap_init();
+    apk_index_init(APK_PATH, DATA_PATH "apk_index.bin");
     sceIoMkdir(DATA_PATH "save", 0777); // the game's _write folder (see reimpl/io.c)
     l_success("Settings loaded.");
 

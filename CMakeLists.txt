@@ -118,6 +118,7 @@ set(SOURCES
     source/vita_pad.c
     source/port_menu.c
     source/apk_extract.c
+    source/apk_index.c
     source/gl_trace.c
     source/gl_census.c
     source/reimpl/bits/_ctype.c

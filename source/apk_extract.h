@@ -13,6 +13,8 @@
 #ifndef SOLOADER_APK_EXTRACT_H
 #define SOLOADER_APK_EXTRACT_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -37,6 +39,16 @@ typedef enum {
  * a broken file at @p out_path.
  */
 ApkResult apk_extract_file(const char *apk_path, const char *entry_name, const char *out_path);
+
+/**
+ * @brief Finds where @p entry_name's data starts inside the APK.
+ *
+ * @param data_offset  File offset of the first data byte.
+ * @param size         Stored (compressed) size.
+ * @param stored       1 if the entry is not compressed.
+ */
+ApkResult apk_locate_entry(const char *apk_path, const char *entry_name,
+                           uint32_t *data_offset, uint32_t *size, int *stored);
 
 const char *apk_result_str(ApkResult res);
 

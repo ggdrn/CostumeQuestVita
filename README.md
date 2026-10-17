@@ -96,6 +96,12 @@ novo, apague as `.so` dessa pasta.
 
 `libfmodexD.so`/`libfmodeventD.so` (debug) e `libfaad.so` não são usadas.
 
+Também no primeiro boot o loader lê os 35 mil cabeçalhos do arquivo de dados
+do jogo (`assets/ant.mp3` dentro do APK) e grava `apk_index.bin` (~1,2 MB).
+Nos boots seguintes ele é carregado de uma vez e o jogo indexa os dados sem
+milhares de leituras pequenas no cartão (`source/apk_index.c`). Se o APK
+mudar, o índice é refeito sozinho.
+
 ## Menu do port
 
 **L + R + Start** abre o menu durante o jogo (o jogo fica pausado enquanto
@@ -123,6 +129,7 @@ linha no formato `chave valor`:
 | Chave | Valores | Padrão | Efeito |
 | --- | --- | --- | --- |
 | `msaa` | 0, 2, 4 | 2 | Antisserrilhado; 0 alivia a GPU. Vale no próximo boot |
+| `allocator` | fast, newlib | fast | `fast`: alocador de blocos pequenos para o jogo (Lua, partículas…); `newlib`: malloc padrão. Vale no próximo boot |
 | `profiler` | 0, 1 | 1 (testes) | Mede as etapas do quadro usando os marcadores do próprio motor (`ThreadMarker`) e grava no `debug.log` |
 | `fps_cap` | 60, 45, 30, 0 | 60 | Limite de FPS. 60 e 30 travados no vsync (1 ou 2 refreshes por quadro); 45 e 0 (sem limite) sem vsync |
 

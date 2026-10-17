@@ -254,6 +254,24 @@ ApkResult apk_extract_file(const char *apk_path, const char *entry_name, const c
     return res;
 }
 
+ApkResult apk_locate_entry(const char *apk_path, const char *entry_name,
+                           uint32_t *data_offset, uint32_t *size, int *stored) {
+    FILE *f = fopen(apk_path, "rb");
+    if (!f)
+        return APK_ERR_OPEN_APK;
+    ZipEntry entry;
+    ApkResult res = find_entry(f, entry_name, &entry);
+    if (res == APK_OK)
+        res = seek_to_data(f, &entry);
+    if (res == APK_OK) {
+        *data_offset = (uint32_t)ftell(f);
+        *size = entry.comp_size;
+        *stored = entry.method == METHOD_STORED;
+    }
+    fclose(f);
+    return res;
+}
+
 const char *apk_result_str(ApkResult res) {
     switch (res) {
         case APK_OK:              return "OK";

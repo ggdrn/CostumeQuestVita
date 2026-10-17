@@ -38,6 +38,9 @@ typedef struct {
 
 extern FdCacheStats fdcache_stats;
 
+// The fd is the APK: reads inside zip local headers come from apk_index
+void fdcache_mark_apk(int fd);
+
 void fdcache_attach(int fd);
 
 void fdcache_detach(int fd);

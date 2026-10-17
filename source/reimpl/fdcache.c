@@ -28,6 +28,7 @@
 #include <psp2/kernel/threadmgr.h>
 
 #include "utils/logger.h"
+#include "apk_index.h"
 
 #define FDCACHE_MAX_FD     128
 #ifndef FDCACHE_BLOCK_SIZE
@@ -53,6 +54,7 @@ typedef struct {
     off_t pos;         // position as seen by the game
     off_t seq_end;     // end of the last card fetch
     int ahead;         // size of the next sequential fetch
+    int is_apk;        // serve local header reads from apk_index
     SceKernelLwMutexWork lock;
 } FdCache;
 
@@ -93,6 +95,15 @@ void fdcache_attach(int fd) {
     sceKernelCreateLwMutex(&c->lock, "fdcache", 0, 0, NULL);
     table_lock_get();
     caches[fd] = c;
+    table_lock_put();
+}
+
+void fdcache_mark_apk(int fd) {
+    if (fd < 0 || fd >= FDCACHE_MAX_FD)
+        return;
+    table_lock_get();
+    if (caches[fd])
+        caches[fd]->is_apk = 1;
     table_lock_put();
 }
 
@@ -205,6 +216,11 @@ ssize_t read_soloader(int fd, void *buf, size_t count) {
     }
 
     size_t done = 0;
+    // Zip local header fields (game data index): from memory
+    if (c->is_apk && c->pos >= 0 && c->pos < 0xFFFFFFFFLL && apk_index_read((uint32_t)c->pos, buf, count)) {
+        c->pos += count;
+        done = count;
+    }
     while (done < count) {
         // Big reads go straight to the card
         if (count - done >= FDCACHE_BLOCK_SIZE) {

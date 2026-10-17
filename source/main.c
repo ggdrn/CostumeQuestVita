@@ -1,6 +1,7 @@
 #include "utils/waitstats.h"
 #include "utils/markers.h"
 #include "reimpl/fastheap.h"
+#include "apk_index.h"
 #include "utils/init.h"
 #include "utils/glutil.h"
 #include "utils/logger.h"
@@ -116,11 +117,11 @@ static int heartbeat_thread(SceSize args, void *argp) {
         uint32_t reads = fdcache_stats.reads;
         uint32_t refills = fdcache_stats.refills;
         filelog_printf("heartbeat: read() %u (+%u), card reads %u (avg %u us, %u direct), cache hits %u, "
-                       "game got %u KB / card gave %u KB, lseek() %u, last fd %d pos %lld\n",
+                       "game got %u KB / card gave %u KB, index hits %u, lseek() %u, last fd %d pos %lld\n",
                        reads, reads - last_reads, refills,
                        refills ? (unsigned)(fdcache_stats.refill_us / refills) : 0, fdcache_stats.direct,
                        fdcache_stats.hits, (unsigned)(fdcache_stats.bytes / 1024),
-                       (unsigned)(fdcache_stats.card_bytes / 1024), fdcache_stats.seeks,
+                       (unsigned)(fdcache_stats.card_bytes / 1024), apk_index_hits, fdcache_stats.seeks,
                        fdcache_stats.last_fd, (long long)fdcache_stats.last_pos);
         last_reads = reads;
 
