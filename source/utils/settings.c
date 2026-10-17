@@ -17,10 +17,12 @@
 
 int setting_msaa;
 int setting_fps_cap;
+int setting_profiler;
 
 void settings_reset() {
     setting_msaa = 2;
     setting_fps_cap = 60;
+    setting_profiler = 1; // TODO: 0 for release 0.1
 }
 
 static void settings_validate() {
@@ -44,6 +46,7 @@ void settings_load() {
             int value = atoi(text);
             if      (strcmp("msaa", key) == 0)    setting_msaa = value;
             else if (strcmp("fps_cap", key) == 0) setting_fps_cap = value;
+            else if (strcmp("profiler", key) == 0) setting_profiler = value != 0;
             else if (!vita_pad_set_mapping(key, text))
                 filelog_printf("settings: unknown key \"%s\"\n", key);
         }
@@ -54,7 +57,7 @@ void settings_load() {
     // about, keeping the user's values
     settings_save();
 
-    filelog_printf("settings: msaa %d, fps_cap %d\n", setting_msaa, setting_fps_cap);
+    filelog_printf("settings: msaa %d, fps_cap %d, profiler %d\n", setting_msaa, setting_fps_cap, setting_profiler);
 }
 
 void settings_save() {
@@ -63,6 +66,8 @@ void settings_save() {
     if (config) {
         fprintf(config, "%s %d\n", "msaa", setting_msaa);
         fprintf(config, "%s %d\n", "fps_cap", setting_fps_cap);
+        // 1: log the game's stage timings in debug.log (small CPU cost)
+        fprintf(config, "%s %d\n", "profiler", setting_profiler);
         // Controls: game controller input <- Vita source (cross circle square
         // triangle start select l r up down left right rear_tl rear_tr
         // rear_bl rear_br none)

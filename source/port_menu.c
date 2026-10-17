@@ -89,7 +89,7 @@ static void draw_text(int x, int y, uint32_t color, const char *text) {
  * Menu model
  */
 
-typedef enum { ITEM_FPS, ITEM_MSAA, ITEM_HEADER, ITEM_MAP, ITEM_RESET, ITEM_CLOSE } ItemType;
+typedef enum { ITEM_FPS, ITEM_MSAA, ITEM_PROFILER, ITEM_HEADER, ITEM_MAP, ITEM_RESET, ITEM_CLOSE } ItemType;
 
 typedef struct {
     ItemType type;
@@ -159,6 +159,7 @@ static void build_items() {
     item_count = 0;
     items[item_count++] = (Item){ ITEM_FPS };
     items[item_count++] = (Item){ ITEM_MSAA };
+    items[item_count++] = (Item){ ITEM_PROFILER };
     items[item_count++] = (Item){ ITEM_HEADER };
     for (int i = 0; i < vita_pad_map_count() && item_count < 29; i++)
         items[item_count++] = (Item){ ITEM_MAP, i };
@@ -183,6 +184,9 @@ static void change(Item *it, int dir) {
             break;
         case ITEM_MSAA:
             setting_msaa = cycle(msaa_values, 3, setting_msaa, dir);
+            break;
+        case ITEM_PROFILER:
+            setting_profiler = !setting_profiler;
             break;
         case ITEM_MAP: {
             int n = vita_pad_source_count();
@@ -222,6 +226,10 @@ static void render(int sel) {
                 snprintf(value, sizeof(value), "< %s >%s",
                          setting_msaa == 0 ? "desligado" : setting_msaa == 2 ? "2x" : "4x",
                          setting_msaa != msaa_at_boot ? " *" : "");
+                break;
+            case ITEM_PROFILER:
+                label = "Profiler no debug.log";
+                snprintf(value, sizeof(value), "< %s >", setting_profiler ? "ligado" : "desligado");
                 break;
             case ITEM_HEADER:
                 draw_text(x, y + 4, COL_TITLE, "Controles (botao do jogo <- botao do Vita)");

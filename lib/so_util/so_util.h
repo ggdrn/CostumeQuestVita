@@ -98,6 +98,16 @@ so_hook hook_arm(uintptr_t addr, uintptr_t dst);
 so_hook hook_addr(uintptr_t addr, uintptr_t dst);
 
 /**
+ * @brief Hooks a tiny ARM function (one instruction is replaced).
+ *
+ * @param mod   Module providing the veneer space.
+ * @param addr  4-byte aligned address of the ARM function to hook.
+ * @param dst   Destination address to redirect execution to.
+ * @return      0 on success, -1 if no veneer space is in branch range.
+ */
+int hook_arm_short(so_module *mod, uintptr_t addr, uintptr_t dst);
+
+/**
  * @brief Flushes the instruction and data caches for a module's text segment.
  *
  * Must be called after applying patches so the CPU sees the updated

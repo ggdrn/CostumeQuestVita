@@ -1,4 +1,5 @@
 #include "utils/waitstats.h"
+#include "utils/markers.h"
 #include "utils/init.h"
 #include "utils/glutil.h"
 #include "utils/logger.h"
@@ -82,6 +83,7 @@ static int heartbeat_thread(SceSize args, void *argp) {
         extern volatile uint32_t frame_count, frame_max_us;
         extern volatile uint64_t frame_work_us, frame_swap_us;
         uint32_t frames = frame_count;
+        markers_log(frames, 5 * 1000 * 1000);
         if (frames) {
             filelog_printf("heartbeat: %u.%u fps, frame avg %u ms (game %u ms + swap %u ms), worst %u ms\n",
                            frames / 5, (frames * 10 / 5) % 10,

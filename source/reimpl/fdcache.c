@@ -7,10 +7,15 @@
  * @file  fdcache.c
  * @brief Read-ahead cache for read-only file descriptors.
  *
- * Each fd gets a few aligned blocks with LRU replacement. Zip parsing
- * alternates between the central directory (end of the file) and the local
- * headers (ascending offsets), so a single buffer would be thrown away on
- * every jump.
+ * Each fd gets a few blocks with LRU replacement. Zip parsing alternates
+ * between the central directory (end of the file) and the local headers
+ * (ascending offsets), so a single buffer would be thrown away on every jump.
+ *
+ * Read-ahead is adaptive: a miss away from the previous one fetches only
+ * FDCACHE_MIN_READ (the game mostly reads small headers scattered over the
+ * 670MB archive, and a fixed 64KB fetch read ~5x more than it used); each
+ * miss that continues where the last fetch ended doubles the size, up to
+ * FDCACHE_BLOCK_SIZE, for streaming.
  */
 
 #include "reimpl/fdcache.h"
@@ -26,7 +31,10 @@
 
 #define FDCACHE_MAX_FD     128
 #ifndef FDCACHE_BLOCK_SIZE
-#define FDCACHE_BLOCK_SIZE (64 * 1024)
+#define FDCACHE_BLOCK_SIZE (128 * 1024) // largest fetch (and buffer size)
+#endif
+#ifndef FDCACHE_MIN_READ
+#define FDCACHE_MIN_READ   (8 * 1024)   // fetch for a random access
 #endif
 #ifndef FDCACHE_BLOCKS
 #define FDCACHE_BLOCKS     8
@@ -34,7 +42,7 @@
 
 typedef struct {
     uint8_t *buf;      // allocated on first use
-    off_t start;       // aligned file offset of buf[0], -1 if empty
+    off_t start;       // file offset of buf[0], -1 if empty
     int len;           // valid bytes (short at EOF)
     uint32_t last_use;
 } FdBlock;
@@ -43,6 +51,8 @@ typedef struct {
     FdBlock blocks[FDCACHE_BLOCKS];
     uint32_t tick;
     off_t pos;         // position as seen by the game
+    off_t seq_end;     // end of the last card fetch
+    int ahead;         // size of the next sequential fetch
     SceKernelLwMutexWork lock;
 } FdCache;
 
@@ -133,21 +143,18 @@ static ssize_t timed_pread(int fd, void *buf, size_t count, off_t offset) {
 }
 
 // Returns the block holding `pos`, reading it from the card if needed
-static FdBlock *get_block(int fd, FdCache *c, off_t pos) {
-    off_t start = pos - (pos % FDCACHE_BLOCK_SIZE);
+static FdBlock *get_block(int fd, FdCache *c, off_t pos, size_t want) {
     FdBlock *victim = &c->blocks[0];
 
     for (int i = 0; i < FDCACHE_BLOCKS; i++) {
         FdBlock *b = &c->blocks[i];
-        if (b->start == start) {
+        if (b->start >= 0 && pos >= b->start && pos < b->start + b->len) {
             fdcache_stats.hits++;
             b->last_use = ++c->tick;
             return b;
         }
         if (b->start < 0 || b->last_use < victim->last_use)
             victim = b;
-        if (b->start < 0)
-            break;
     }
 
     if (!victim->buf) {
@@ -156,14 +163,32 @@ static FdBlock *get_block(int fd, FdCache *c, off_t pos) {
             return NULL;
     }
 
-    ssize_t r = timed_pread(fd, victim->buf, FDCACHE_BLOCK_SIZE, start);
-    if (r <= 0) {
+    // Sequential if this continues the previous fetch: grow the read-ahead
+    if (pos == c->seq_end && c->ahead) {
+        c->ahead *= 2;
+        if (c->ahead > FDCACHE_BLOCK_SIZE)
+            c->ahead = FDCACHE_BLOCK_SIZE;
+    } else {
+        c->ahead = FDCACHE_MIN_READ;
+    }
+    // Start on a 4KB boundary (card sectors), still covering pos
+    off_t start = pos & ~(off_t)4095;
+    // At least what the game asked for
+    size_t size = c->ahead;
+    if ((size_t)(pos - start) + want > size)
+        size = (size_t)(pos - start) + want;
+    if (size > FDCACHE_BLOCK_SIZE)
+        size = FDCACHE_BLOCK_SIZE;
+
+    ssize_t r = timed_pread(fd, victim->buf, size, start);
+    if (r <= 0 || start + r <= pos) {
         victim->start = -1;
         return NULL;
     }
     victim->start = start;
     victim->len = r;
     victim->last_use = ++c->tick;
+    c->seq_end = start + r;
     return victim;
 }
 
@@ -192,12 +217,10 @@ ssize_t read_soloader(int fd, void *buf, size_t count) {
             continue;
         }
 
-        FdBlock *b = get_block(fd, c, c->pos);
+        FdBlock *b = get_block(fd, c, c->pos, count - done);
         if (!b)
             break; // EOF or error
         off_t in_block = c->pos - b->start;
-        if (in_block >= b->len)
-            break; // EOF inside a short block
         size_t n = b->len - in_block;
         if (n > count - done)
             n = count - done;

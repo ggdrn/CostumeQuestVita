@@ -745,6 +745,26 @@ static uintptr_t so_alloc_arena(so_module *so, uintptr_t range, uintptr_t dst, s
 }
 
 /**
+ * @brief Hooks an ARM function too small for hook_arm()'s 8-byte patch.
+ *
+ * Writes a single B to a veneer (LDR PC + target) in the module's patch or
+ * cave arena, so only the first instruction of @p addr is replaced.
+ *
+ * @return 0 on success, -1 when no arena space is in branch range.
+ */
+int hook_arm_short(so_module *mod, uintptr_t addr, uintptr_t dst) {
+	uintptr_t veneer = so_alloc_arena(mod, 0x1FFFFFC, addr, 8);
+	if (!veneer)
+		return -1;
+	uint32_t v[2] = { 0xe51ff004, dst }; // LDR PC, [PC, #-0x4]; .word dst
+	sceClibMemcpy((void *)veneer, v, sizeof(v));
+	int32_t off = (int32_t)(veneer - (addr + 8)) >> 2;
+	uint32_t b = 0xEA000000 | ((uint32_t)off & 0x00FFFFFF);
+	sceClibMemcpy((void *)addr, &b, sizeof(b));
+	return 0;
+}
+
+/**
  * @brief Replaces an LDMIA instruction with a trampoline of individual LDRs.
  *
  * @param mod  Module whose arena is used to allocate trampoline space.

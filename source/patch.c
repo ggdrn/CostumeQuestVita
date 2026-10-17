@@ -27,6 +27,7 @@
 #include "utils/settings.h"
 #include "vita_pad.h"
 #include "port_menu.h"
+#include "utils/markers.h"
 #include "reimpl/controls.h"
 
 #define SCE_KERNEL_MEMBLOCK_TYPE_USER_RX (0x0C20D050)
@@ -306,6 +307,9 @@ void so_patch(void) {
 
 	// Vita controls as an SDL game controller (analog sticks included)
 	vita_pad_patch();
+
+	// The engine's own (empty) profiler markers, timed
+	markers_patch();
 
 	// EGL / window
 	hook_cq("SDL_EGL_LoadLibrary", SDL_EGL_LoadLibrary_hook);

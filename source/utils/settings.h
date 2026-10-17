@@ -22,6 +22,7 @@ extern "C" {
 // ux0:data/costumequest/config.txt, "key value" per line
 extern int setting_msaa;     // 0, 2 or 4 (applied at boot)
 extern int setting_fps_cap;  // 60, 45, 30 or 0 (unlimited)
+extern int setting_profiler; // game stage timings in debug.log
 
 void settings_load();
 void settings_save();

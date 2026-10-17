@@ -103,6 +103,7 @@ ele está aberto):
 
 - **Limite de FPS:** 60, 45, 30 ou sem limite. Vale na hora.
 - **Antialiasing (MSAA):** desligado, 2x ou 4x. Vale no próximo boot.
+- **Profiler no debug.log:** liga/desliga a medição das etapas do jogo.
 - **Controles:** cada botão do controle do jogo pode vir de qualquer botão do
   Vita ou de um quadrante do touch traseiro.
 - **Restaurar controles padrão**.
@@ -122,6 +123,7 @@ linha no formato `chave valor`:
 | Chave | Valores | Padrão | Efeito |
 | --- | --- | --- | --- |
 | `msaa` | 0, 2, 4 | 2 | Antisserrilhado; 0 alivia a GPU. Vale no próximo boot |
+| `profiler` | 0, 1 | 1 (testes) | Mede as etapas do quadro usando os marcadores do próprio motor (`ThreadMarker`) e grava no `debug.log` |
 | `fps_cap` | 60, 45, 30, 0 | 60 | Limite de FPS. 60 e 30 travados no vsync (1 ou 2 refreshes por quadro); 45 e 0 (sem limite) sem vsync |
 
 ## Controles
