@@ -108,6 +108,14 @@ so_hook hook_addr(uintptr_t addr, uintptr_t dst);
 int hook_arm_short(so_module *mod, uintptr_t addr, uintptr_t dst);
 
 /**
+ * @brief Hooks an ARM function, keeping the original callable.
+ *
+ * @return Address to call for the original function, or 0 when its first two
+ *         instructions can't be moved (PC-relative, branches).
+ */
+uintptr_t hook_arm_trampoline(so_module *mod, uintptr_t addr, uintptr_t dst);
+
+/**
  * @brief Flushes the instruction and data caches for a module's text segment.
  *
  * Must be called after applying patches so the CPU sees the updated

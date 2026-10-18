@@ -137,6 +137,7 @@ set(SOURCES
     source/utils/profiler.c
     source/utils/waitstats.c
     source/utils/markers.c
+    source/utils/luaprof.c
     source/utils/glutil.c
     source/utils/init.c
     source/utils/logger.c

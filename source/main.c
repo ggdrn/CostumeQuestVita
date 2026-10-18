@@ -1,5 +1,6 @@
 #include "utils/waitstats.h"
 #include "utils/markers.h"
+#include "utils/luaprof.h"
 #include "reimpl/fastheap.h"
 #include "apk_index.h"
 #include "utils/init.h"
@@ -86,6 +87,7 @@ static int heartbeat_thread(SceSize args, void *argp) {
         extern volatile uint64_t frame_work_us, frame_swap_us;
         uint32_t frames = frame_count;
         markers_log(frames, 5 * 1000 * 1000);
+        luaprof_log(frames);
         {
             static uint32_t last_allocs, last_frees;
             uint32_t allocs = fastheap_stats.allocs, frees = fastheap_stats.frees;

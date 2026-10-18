@@ -744,6 +744,15 @@ static uintptr_t so_alloc_arena(so_module *so, uintptr_t range, uintptr_t dst, s
 	return (uintptr_t)NULL;
 }
 
+// Code written to the patch / cave arenas must reach the instruction side
+static void flush_range(uintptr_t addr, size_t size) {
+#ifdef USE_KUBRIDGE
+	kuKernelFlushCaches((void *)addr, size);
+#else
+	sceKernelSyncVMDomain(vm_blk, (void *)addr, size);
+#endif
+}
+
 /**
  * @brief Hooks an ARM function too small for hook_arm()'s 8-byte patch.
  *
@@ -758,10 +767,48 @@ int hook_arm_short(so_module *mod, uintptr_t addr, uintptr_t dst) {
 		return -1;
 	uint32_t v[2] = { 0xe51ff004, dst }; // LDR PC, [PC, #-0x4]; .word dst
 	sceClibMemcpy((void *)veneer, v, sizeof(v));
+	flush_range(veneer, sizeof(v));
 	int32_t off = (int32_t)(veneer - (addr + 8)) >> 2;
 	uint32_t b = 0xEA000000 | ((uint32_t)off & 0x00FFFFFF);
 	sceClibMemcpy((void *)addr, &b, sizeof(b));
 	return 0;
+}
+
+// True if an ARM instruction can run from another address unchanged:
+// conservative, rejects anything naming PC except a PUSH without PC
+static int arm_insn_relocatable(uint32_t insn) {
+	if ((insn & 0xF0000000) == 0xF0000000)
+		return 0; // unconditional space
+	if ((insn & 0x0FFF0000) == 0x092D0000) // STMDB SP!, {...} (PUSH)
+		return !(insn & 0x8000);
+	if ((insn & 0x0E000000) == 0x0A000000)
+		return 0; // B / BL
+	if (((insn >> 16) & 0xF) == 0xF || ((insn >> 12) & 0xF) == 0xF || (insn & 0xF) == 0xF)
+		return 0;
+	return 1;
+}
+
+/**
+ * @brief Hooks an ARM function and returns a pointer that calls the original.
+ *
+ * The first two instructions are copied to a trampoline (they must not use
+ * PC) followed by a jump back to @p addr + 8, then @p addr is patched like
+ * hook_arm().
+ *
+ * @return The trampoline (call it as the original function), or 0.
+ */
+uintptr_t hook_arm_trampoline(so_module *mod, uintptr_t addr, uintptr_t dst) {
+	uint32_t *orig = (uint32_t *)addr;
+	if ((addr & 3) || !arm_insn_relocatable(orig[0]) || !arm_insn_relocatable(orig[1]))
+		return 0;
+	uintptr_t tramp = so_alloc_arena(mod, 0, addr, 16);
+	if (!tramp)
+		return 0;
+	uint32_t code[4] = { orig[0], orig[1], 0xe51ff004, addr + 8 }; // ...; LDR PC, [PC, #-4]; .word
+	sceClibMemcpy((void *)tramp, code, sizeof(code));
+	flush_range(tramp, sizeof(code));
+	hook_arm(addr, dst);
+	return tramp;
 }
 
 /**

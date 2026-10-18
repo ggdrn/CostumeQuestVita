@@ -28,6 +28,7 @@
 #include "vita_pad.h"
 #include "port_menu.h"
 #include "utils/markers.h"
+#include "utils/luaprof.h"
 #include "reimpl/controls.h"
 
 #define SCE_KERNEL_MEMBLOCK_TYPE_USER_RX (0x0C20D050)
@@ -310,6 +311,7 @@ void so_patch(void) {
 
 	// The engine's own (empty) profiler markers, timed
 	markers_patch();
+	luaprof_patch();
 
 	// EGL / window
 	hook_cq("SDL_EGL_LoadLibrary", SDL_EGL_LoadLibrary_hook);

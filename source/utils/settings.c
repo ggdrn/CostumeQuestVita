@@ -19,12 +19,16 @@ int setting_msaa;
 int setting_fps_cap;
 int setting_profiler;
 int setting_fast_alloc;
+int setting_lua_gcpause;
+int setting_lua_gcstepmul;
 
 void settings_reset() {
     setting_msaa = 2;
     setting_fps_cap = 60;
     setting_profiler = 1; // TODO: 0 for release 0.1
     setting_fast_alloc = 1;
+    setting_lua_gcpause = 200;
+    setting_lua_gcstepmul = 200;
 }
 
 static void settings_validate() {
@@ -32,6 +36,10 @@ static void settings_validate() {
         setting_msaa = 2;
     if (setting_fps_cap != 0 && setting_fps_cap != 30 && setting_fps_cap != 45 && setting_fps_cap != 60)
         setting_fps_cap = 60;
+    if (setting_lua_gcpause < 50 || setting_lua_gcpause > 1000)
+        setting_lua_gcpause = 200;
+    if (setting_lua_gcstepmul < 50 || setting_lua_gcstepmul > 1000)
+        setting_lua_gcstepmul = 200;
 }
 
 void settings_load() {
@@ -49,6 +57,8 @@ void settings_load() {
             if      (strcmp("msaa", key) == 0)    setting_msaa = value;
             else if (strcmp("fps_cap", key) == 0) setting_fps_cap = value;
             else if (strcmp("profiler", key) == 0) setting_profiler = value != 0;
+            else if (strcmp("lua_gcpause", key) == 0) setting_lua_gcpause = value;
+            else if (strcmp("lua_gcstepmul", key) == 0) setting_lua_gcstepmul = value;
             else if (strcmp("allocator", key) == 0) setting_fast_alloc = strcmp(text, "newlib") != 0;
             else if (!vita_pad_set_mapping(key, text))
                 filelog_printf("settings: unknown key \"%s\"\n", key);
@@ -74,6 +84,9 @@ void settings_save() {
         fprintf(config, "%s %d\n", "profiler", setting_profiler);
         // fast: small-block allocator for the game; newlib: plain malloc (next boot)
         fprintf(config, "%s %s\n", "allocator", setting_fast_alloc ? "fast" : "newlib");
+        // Lua garbage collector (Lua defaults 200 / 200; higher pause = collects less often), next boot
+        fprintf(config, "%s %d\n", "lua_gcpause", setting_lua_gcpause);
+        fprintf(config, "%s %d\n", "lua_gcstepmul", setting_lua_gcstepmul);
         // Controls: game controller input <- Vita source (cross circle square
         // triangle start select l r up down left right rear_tl rear_tr
         // rear_bl rear_br none)
