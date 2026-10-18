@@ -25,7 +25,7 @@ int setting_lua_gcstepmul;
 void settings_reset() {
     setting_msaa = 2;
     setting_fps_cap = 60;
-    setting_profiler = 1; // TODO: 0 for release 0.1
+    setting_profiler = 0;
     setting_fast_alloc = 1;
     setting_lua_gcpause = 200;
     setting_lua_gcstepmul = 180; // the game's own value
