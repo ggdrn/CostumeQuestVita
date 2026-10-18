@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 
 #include "apk_extract.h"
@@ -202,6 +203,57 @@ void apk_index_init(const char *apk_path, const char *index_path) {
     }
     if (build(apk_path) == 0)
         save(index_path, h);
+}
+
+int apk_index_find(const char *apk_path, const char *name, uint32_t *data_offset, uint32_t *size) {
+    uint32_t base, data_size;
+    int stored;
+    if (apk_locate_entry(apk_path, DATA_ENTRY, &base, &data_size, &stored) != APK_OK || !stored)
+        return -1;
+    FILE *f = fopen(apk_path, "rb");
+    if (!f)
+        return -1;
+    setvbuf(f, NULL, _IONBF, 0);
+    int ret = -1;
+    uint8_t *cd = NULL;
+    static uint8_t eocd[22 + 0xFFFF];
+    uint32_t tail = data_size < sizeof(eocd) ? data_size : sizeof(eocd);
+    if (!read_at(f, base + data_size - tail, eocd, tail))
+        goto out;
+    uint32_t cd_offset = 0, cd_size = 0, count = 0;
+    for (int i = tail - 22; i >= 0; i--) {
+        if (rd32(eocd + i) == 0x06054b50) {
+            count = rd16(eocd + i + 10);
+            cd_size = rd32(eocd + i + 12);
+            cd_offset = rd32(eocd + i + 16);
+            break;
+        }
+    }
+    if (!count || cd_offset + cd_size > data_size || !(cd = malloc(cd_size)) || !read_at(f, base + cd_offset, cd, cd_size))
+        goto out;
+    size_t name_len = strlen(name);
+    for (uint32_t p = 0, n = 0; n < count && p + 46 <= cd_size; n++) {
+        if (rd32(cd + p) != 0x02014b50)
+            break;
+        uint16_t fn_len = rd16(cd + p + 28);
+        if (fn_len == name_len && p + 46 + fn_len <= cd_size && strncasecmp((const char *)cd + p + 46, name, name_len) == 0) {
+            if (rd16(cd + p + 10) != 0) // compressed: can't be served as is
+                break;
+            uint32_t local = base + rd32(cd + p + 42);
+            uint8_t hdr[HDR_SIZE];
+            if (!read_at(f, local, hdr, HDR_SIZE) || rd32(hdr) != 0x04034b50)
+                break;
+            *data_offset = local + HDR_SIZE + rd16(hdr + 26) + rd16(hdr + 28);
+            *size = rd32(cd + p + 20);
+            ret = 0;
+            break;
+        }
+        p += 46 + fn_len + rd16(cd + p + 30) + rd16(cd + p + 32);
+    }
+out:
+    free(cd);
+    fclose(f);
+    return ret;
 }
 
 int apk_index_read(uint32_t pos, void *dst, size_t n) {

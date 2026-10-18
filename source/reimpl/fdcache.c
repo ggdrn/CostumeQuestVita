@@ -98,6 +98,15 @@ void fdcache_attach(int fd) {
     table_lock_put();
 }
 
+static uint32_t overlay_off, overlay_len;
+static const uint8_t *overlay_data;
+
+void fdcache_set_apk_overlay(uint32_t offset, const void *data, uint32_t len) {
+    overlay_off = offset;
+    overlay_data = data;
+    overlay_len = len;
+}
+
 void fdcache_mark_apk(int fd) {
     if (fd < 0 || fd >= FDCACHE_MAX_FD)
         return;
@@ -222,10 +231,24 @@ ssize_t read_soloader(int fd, void *buf, size_t count) {
         done = count;
     }
     while (done < count) {
+        size_t want = count - done;
+        // File data replaced by the port: never the card's bytes
+        if (c->is_apk && overlay_len) {
+            off_t ov_end = (off_t)overlay_off + overlay_len;
+            if (c->pos >= overlay_off && c->pos < ov_end) {
+                size_t n = ov_end - c->pos < (off_t)want ? (size_t)(ov_end - c->pos) : want;
+                memcpy((uint8_t *)buf + done, overlay_data + (c->pos - overlay_off), n);
+                done += n;
+                c->pos += n;
+                continue;
+            }
+            if (c->pos < overlay_off && c->pos + (off_t)want > overlay_off)
+                want = overlay_off - c->pos;
+        }
         // Big reads go straight to the card
-        if (count - done >= FDCACHE_BLOCK_SIZE) {
+        if (want >= FDCACHE_BLOCK_SIZE) {
             fdcache_stats.direct++;
-            ssize_t r = timed_pread(fd, (uint8_t *)buf + done, count - done, c->pos);
+            ssize_t r = timed_pread(fd, (uint8_t *)buf + done, want, c->pos);
             if (r <= 0)
                 break;
             done += r;
@@ -233,13 +256,13 @@ ssize_t read_soloader(int fd, void *buf, size_t count) {
             continue;
         }
 
-        FdBlock *b = get_block(fd, c, c->pos, count - done);
+        FdBlock *b = get_block(fd, c, c->pos, want);
         if (!b)
             break; // EOF or error
         off_t in_block = c->pos - b->start;
         size_t n = b->len - in_block;
-        if (n > count - done)
-            n = count - done;
+        if (n > want)
+            n = want;
         memcpy((uint8_t *)buf + done, b->buf + in_block, n);
         done += n;
         c->pos += n;
