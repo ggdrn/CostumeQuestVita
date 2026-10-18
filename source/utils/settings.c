@@ -76,9 +76,9 @@ void settings_load() {
     // about, keeping the user's values
     settings_save();
 
-    filelog_printf("settings: msaa %d, fps_cap %d, profiler %d, allocator %s, controls %s\n", setting_msaa,
+    filelog_printf("settings: msaa %d, fps_cap %d, profiler %d, allocator %s, controls %s, language %s\n", setting_msaa,
                    setting_fps_cap, setting_profiler, setting_fast_alloc ? "fast" : "newlib",
-                   setting_controls_gamepad ? "gamepad" : "touch");
+                   setting_controls_gamepad ? "gamepad" : "touch", setting_language);
 }
 
 void settings_save() {
@@ -89,7 +89,8 @@ void settings_save() {
         fprintf(config, "%s %d\n", "fps_cap", setting_fps_cap);
         // gamepad: PlayStation-button UI and prompts; touch: the Android touch UI (next boot)
         fprintf(config, "%s %s\n", "controls", setting_controls_gamepad ? "gamepad" : "touch");
-        // auto: the Vita's language; <name>: the translation in translations/<name>/ (next boot)
+        // auto: a translation in translations/ if there is one, else the Vita's language;
+        // <name>: the translation in translations/<name>/ (next boot)
         fprintf(config, "%s %s\n", "language", setting_language);
         // 1: log the game's stage timings in debug.log (small CPU cost); 2: also time every Lua call (slow)
         fprintf(config, "%s %d\n", "profiler", setting_profiler);

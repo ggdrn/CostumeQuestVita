@@ -12,7 +12,8 @@
  * "StringTable{LineCodeData={KEY=LineCodeData{Text=...};...}}" in a "dfcf"
  * container (64-byte header, zlib).
  *
- * With "language <name>" in config.txt, the tables found in
+ * With "language <name>" in config.txt (or "auto" and a translation folder
+ * present: the first one with costumequest.STbl is used), the tables found in
  * translations/<name>/ (<table>.STbl, plain text, e.g. from
  * extras/scripts/translation_from_pc.py) are compressed into that container
  * at boot and served in place of the French tables (reimpl/fdcache.c), and
@@ -93,11 +94,41 @@ static uint8_t *build_table(const uint8_t *text, size_t len, uint32_t size, uint
     return out;
 }
 
+// "auto": the first folder of translations/ holding a main game table
+static int find_translation(char *name, size_t size) {
+    SceUID d = sceIoDopen(TRANSLATIONS_DIR);
+    if (d < 0)
+        return 0;
+    SceIoDirent ent;
+    int found = 0;
+    while (!found && sceIoDread(d, &ent) > 0) {
+        if (!SCE_S_ISDIR(ent.d_stat.st_mode) || ent.d_name[0] == '.')
+            continue;
+        char path[320];
+        SceIoStat st;
+        snprintf(path, sizeof(path), TRANSLATIONS_DIR "%s/costumequest.STbl", ent.d_name);
+        if (sceIoGetstat(path, &st) >= 0) {
+            snprintf(name, size, "%s", ent.d_name);
+            found = 1;
+        }
+    }
+    sceIoDclose(d);
+    return found;
+}
+
 void translation_init() {
-    if (!setting_language[0] || strcmp(setting_language, "auto") == 0)
-        return;
+    char name[64];
+    if (!setting_language[0] || strcmp(setting_language, "auto") == 0) {
+        if (!find_translation(name, sizeof(name))) {
+            filelog_printf("translation: none in " TRANSLATIONS_DIR ", using the system language\n");
+            return;
+        }
+        filelog_printf("translation: language auto, found translations/%s\n", name);
+    } else {
+        snprintf(name, sizeof(name), "%s", setting_language);
+    }
     char dir[256];
-    snprintf(dir, sizeof(dir), TRANSLATIONS_DIR "%s/", setting_language);
+    snprintf(dir, sizeof(dir), TRANSLATIONS_DIR "%s/", name);
     SceIoStat st;
     if (sceIoGetstat(dir, &st) < 0) {
         filelog_printf("translation: %s not found, using the system language\n", dir);
@@ -148,7 +179,7 @@ void translation_init() {
         served++;
     }
     active = served > 0;
-    filelog_printf("translation: \"%s\", %d tables in %u ms%s\n", setting_language, served,
+    filelog_printf("translation: \"%s\", %d tables in %u ms%s\n", name, served,
                    (unsigned)((sceKernelGetProcessTimeWide() - t0) / 1000),
                    active ? ", game language " HOST_GAME_LANG : "");
 }
