@@ -31,6 +31,12 @@
  *   else touches it, so Android always shows the touch frames. With gamepad
  *   it is set to false with the other battle HUD variables every frame
  *   (after Battle_PushFlashVars).
+ * - Battle minigames: the Android build judges them only from touch input
+ *   (Battle_GetInputType: a tap, or a swipe in one of 4 directions, in a
+ *   1280x720 space; Battle_GetButtonOverlap: is the tap on the slot where
+ *   the prompt's icon is drawn). During a minigame a face button becomes a
+ *   tap on the slot of that button's icon (asked to the game, so a wrong
+ *   button misses, as a wrong tap would) and the D-pad becomes a swipe.
  */
 
 #include "controls_ui.h"
@@ -260,6 +266,120 @@ static void patch_battle_hud() {
         l_error("controls_ui: can't hook Battle_PushFlashVars");
 }
 
+/*
+ * Battle minigames: buttons as the touch input the game judges
+ */
+
+#define BATTLE_STATE_MINIGAME 6
+#define INPUT_NONE  -1
+#define INPUT_TAP    0
+// Swipe directions as Battle_GetInputType returns them (|dx| or |dy| > 80)
+#define SWIPE_LEFT   1
+#define SWIPE_RIGHT  2
+#define SWIPE_UP     3
+#define SWIPE_DOWN   4
+
+typedef struct { float x, y; } Vec2;
+static int (*orig_get_input_type)(const uint8_t *pad, Vec2 *pos, float *dist);
+static int (*button_overlap)(int prompt, const Vec2 *pos);
+static volatile uint32_t *battle_mg_array; // Array<BattlePrompt>: count << 6, capacity, data
+
+static int find_slot(int prompt, Vec2 *out) {
+    // The icons are ~100 units wide: a coarse grid finds them; then centre it
+    float x0 = 0, x1 = -1, y0 = 0, y1 = -1;
+    for (int y = 8; y < 720; y += 16) {
+        for (int x = 8; x < 1280; x += 16) {
+            Vec2 p = { (float)x, (float)y };
+            if (button_overlap(prompt, &p)) {
+                if (x1 < 0) { x0 = x1 = x; y0 = y1 = y; }
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                y1 = y;
+            }
+        }
+    }
+    if (x1 < 0)
+        return 0;
+    out->x = (x0 + x1) / 2;
+    out->y = (y0 + y1) / 2;
+    return 1;
+}
+
+static void log_prompts(const char *what) {
+    uint32_t count = battle_mg_array[0] >> 6;
+    const int32_t *data = (const int32_t *)(uintptr_t)battle_mg_array[2];
+    char buf[96];
+    int n = 0;
+    for (uint32_t i = 0; i < count && i < 8 && data; i++)
+        n += snprintf(buf + n, sizeof(buf) - n, " %d", data[i]);
+    buf[n] = 0;
+    if (battle_log_count++ < BATTLE_LOG_MAX)
+        filelog_printf("battle: %s (minigame %d, prompts%s)\n", what, *battle_minigame, buf);
+}
+
+static int Battle_GetInputType_hook(const uint8_t *pad, Vec2 *pos, float *dist) {
+    static uint32_t last_ctrl;
+    SceCtrlData ctrl;
+    sceCtrlPeekBufferPositive(0, &ctrl, 1);
+    uint32_t pressed = ctrl.buttons & ~last_ctrl;
+    last_ctrl = ctrl.buttons;
+
+    int type = orig_get_input_type(pad, pos, dist);
+    if (*battle_input_state != BATTLE_STATE_MINIGAME)
+        return type;
+    if (type != INPUT_NONE) {
+        char what[64];
+        snprintf(what, sizeof(what), "touch input %d at %.0f,%.0f", type, pos->x, pos->y);
+        log_prompts(what);
+        return type;
+    }
+
+    // Face buttons: the controller's A/B/X/Y "pressed this frame" bytes (after remapping)
+    for (int b = 0; b < 4; b++) {
+        if (!pad[170 + b])
+            continue;
+        Vec2 p = { -1000, -1000 }; // off every slot: a miss
+        int found = find_slot(b, &p);
+        *pos = p;
+        *dist = 0;
+        char what[64];
+        snprintf(what, sizeof(what), "button %c -> tap %s %.0f,%.0f", "ABXY"[b], found ? "on its icon" : "(no icon: miss)", p.x, p.y);
+        log_prompts(what);
+        return INPUT_TAP;
+    }
+
+    // D-pad: swipes
+    static const struct { uint32_t button; int swipe; const char *name; } dirs[] = {
+        { SCE_CTRL_LEFT, SWIPE_LEFT, "left" }, { SCE_CTRL_RIGHT, SWIPE_RIGHT, "right" },
+        { SCE_CTRL_UP, SWIPE_UP, "up" }, { SCE_CTRL_DOWN, SWIPE_DOWN, "down" },
+    };
+    for (int i = 0; i < 4; i++) {
+        if (!(pressed & dirs[i].button))
+            continue;
+        pos->x = 640;
+        pos->y = 360;
+        *dist = 200;
+        char what[64];
+        snprintf(what, sizeof(what), "d-pad %s -> swipe %d", dirs[i].name, dirs[i].swipe);
+        log_prompts(what);
+        return dirs[i].swipe;
+    }
+    return type;
+}
+
+static void patch_battle_minigames() {
+    uintptr_t fn = so_symbol(&so_mod, "_Z19Battle_GetInputTypeRK14VirtualGamepadR4vec2Rf");
+    button_overlap = (void *)so_symbol(&so_mod, "_Z23Battle_GetButtonOverlap12BattlePromptRK4vec2");
+    battle_mg_array = (void *)so_symbol(&so_mod, "g_BattleMiniGameButtons");
+    if (!fn || !button_overlap || !battle_mg_array || !battle_input_state || !battle_minigame) {
+        l_error("controls_ui: minigame symbols missing");
+        return;
+    }
+    orig_get_input_type = (void *)hook_arm_trampoline(&so_mod, fn, (uintptr_t)Battle_GetInputType_hook);
+    if (!orig_get_input_type)
+        l_error("controls_ui: can't hook Battle_GetInputType");
+}
+
 static void hook_battle_diagnostics() {
     uintptr_t fn = so_symbol(&so_mod, "_Z18Battle_HandleInputRK14VirtualGamepad");
     battle_input_state = (void *)so_symbol(&so_mod, "g_BattleInputState");
@@ -288,6 +408,7 @@ void controls_ui_patch() {
         patch_gamepad_flag();
         patch_icons();
         patch_battle_hud();
+        patch_battle_minigames();
     }
     filelog_printf("controls_ui: %s layout\n", setting_controls_gamepad ? "PlayStation (gamepad)" : "touch");
 }
