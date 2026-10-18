@@ -25,6 +25,12 @@
  *   (PlayStation buttons + touch symbols; reimpl/fdcache.c), and the
  *   PlayStation button images ("PS3__<name>") are redirected to their folder
  *   in RsRef<Texture>::BindFile.
+ * - Battle HUD: BattleHUD_DLC shows its console frames (action labels next
+ *   to the face buttons, button prompts in minigames) when
+ *   _global.ShowPCButtons is false; its init() sets it to true and nothing
+ *   else touches it, so Android always shows the touch frames. With gamepad
+ *   it is set to false with the other battle HUD variables every frame
+ *   (after Battle_PushFlashVars).
  */
 
 #include "controls_ui.h"
@@ -178,8 +184,8 @@ static void patch_icons() {
  * pressed (VirtualGamepad state bytes), its input state and minigame.
  */
 
-#define BATTLE_LOG_MAX 600
-#define VG_FIRST 160
+#define BATTLE_LOG_MAX 3000
+#define VG_FIRST 170 // 160-169 change every frame (counters)
 #define VG_LAST  300
 
 static void (*orig_battle_input)(const uint8_t *pad);
@@ -224,6 +230,36 @@ static void Battle_HandleInput_hook(const uint8_t *pad) {
     orig_battle_input(pad);
 }
 
+/*
+ * Battle HUD console frames
+ */
+
+typedef struct { void *entry; } Name;
+static void *(*name_lookup)(const char *s, unsigned len, int tag);
+static void (*snapshot_set_bool)(void *snapshot, const Name *name, int value);
+static void (*orig_push_flash_vars)(void *snapshot);
+static Name show_pc_buttons;
+
+static void Battle_PushFlashVars_hook(void *snapshot) {
+    orig_push_flash_vars(snapshot);
+    if (!show_pc_buttons.entry)
+        show_pc_buttons.entry = name_lookup("ShowPCButtons", 13, 2);
+    snapshot_set_bool(snapshot, &show_pc_buttons, 0);
+}
+
+static void patch_battle_hud() {
+    uintptr_t fn = so_symbol(&so_mod, "_Z20Battle_PushFlashVarsP18FlashValueSnapshot");
+    name_lookup = (void *)so_symbol(&so_mod, "_ZN4Name13_LookupStringEPKcjNS_14ConstructorTagE");
+    snapshot_set_bool = (void *)so_symbol(&so_mod, "_ZN18FlashValueSnapshot17SetGlobalVariableERK4Nameb");
+    if (!fn || !name_lookup || !snapshot_set_bool) {
+        l_error("controls_ui: battle HUD symbols missing");
+        return;
+    }
+    orig_push_flash_vars = (void *)hook_arm_trampoline(&so_mod, fn, (uintptr_t)Battle_PushFlashVars_hook);
+    if (!orig_push_flash_vars)
+        l_error("controls_ui: can't hook Battle_PushFlashVars");
+}
+
 static void hook_battle_diagnostics() {
     uintptr_t fn = so_symbol(&so_mod, "_Z18Battle_HandleInputRK14VirtualGamepad");
     battle_input_state = (void *)so_symbol(&so_mod, "g_BattleInputState");
@@ -251,6 +287,7 @@ void controls_ui_patch() {
     if (setting_controls_gamepad) {
         patch_gamepad_flag();
         patch_icons();
+        patch_battle_hud();
     }
     filelog_printf("controls_ui: %s layout\n", setting_controls_gamepad ? "PlayStation (gamepad)" : "touch");
 }
