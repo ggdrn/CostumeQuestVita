@@ -1,4 +1,5 @@
 #include "utils/waitstats.h"
+#include "translation.h"
 #include "utils/markers.h"
 #include "utils/luaprof.h"
 #include "reimpl/fastheap.h"
@@ -53,6 +54,8 @@ static void (*Java_SDLActivity_onNativeKeyUp)(JNIEnv *env, jclass cls, int keyco
 static void (*Java_SDLActivity_onNativeTouch)(JNIEnv *env, jclass cls, int touch_device, int pointer, int action, float x, float y, float p);
 
 static const char *cq_language() {
+    if (translation_game_language())
+        return translation_game_language();
     int lang = SCE_SYSTEM_PARAM_LANG_ENGLISH_US;
     sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_LANG, &lang);
 

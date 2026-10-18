@@ -20,6 +20,7 @@ int setting_fps_cap;
 int setting_profiler;
 int setting_fast_alloc;
 int setting_controls_gamepad;
+char setting_language[32];
 int setting_lua_gcpause;
 int setting_lua_gcstepmul;
 
@@ -29,6 +30,7 @@ void settings_reset() {
     setting_profiler = 0;
     setting_fast_alloc = 1;
     setting_controls_gamepad = 1;
+    strcpy(setting_language, "auto");
     setting_lua_gcpause = 200;
     setting_lua_gcstepmul = 180; // the game's own value
 }
@@ -61,6 +63,7 @@ void settings_load() {
             else if (strcmp("profiler", key) == 0) setting_profiler = value;
             else if (strcmp("lua_gcpause", key) == 0) setting_lua_gcpause = value;
             else if (strcmp("lua_gcstepmul", key) == 0) setting_lua_gcstepmul = value;
+            else if (strcmp("language", key) == 0) snprintf(setting_language, sizeof(setting_language), "%s", text);
             else if (strcmp("controls", key) == 0) setting_controls_gamepad = strcmp(text, "touch") != 0;
             else if (strcmp("allocator", key) == 0) setting_fast_alloc = strcmp(text, "newlib") != 0;
             else if (!vita_pad_set_mapping(key, text))
@@ -86,6 +89,8 @@ void settings_save() {
         fprintf(config, "%s %d\n", "fps_cap", setting_fps_cap);
         // gamepad: PlayStation-button UI and prompts; touch: the Android touch UI (next boot)
         fprintf(config, "%s %s\n", "controls", setting_controls_gamepad ? "gamepad" : "touch");
+        // auto: the Vita's language; <name>: the translation in translations/<name>/ (next boot)
+        fprintf(config, "%s %s\n", "language", setting_language);
         // 1: log the game's stage timings in debug.log (small CPU cost); 2: also time every Lua call (slow)
         fprintf(config, "%s %d\n", "profiler", setting_profiler);
         // fast: small-block allocator for the game; newlib: plain malloc (next boot)

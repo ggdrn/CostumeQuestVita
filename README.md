@@ -103,6 +103,31 @@ jogo, então ela não abre também o pause do jogo.
 O menu é desenhado pela CPU direto na tela (`source/port_menu.c`), sem passar
 pelo OpenGL do jogo.
 
+## Traduções
+
+O port carrega traduções de `ux0:data/costumequest/translations/<nome>/`
+quando o `config.txt` tem `language <nome>` (o padrão `auto` segue o idioma
+do Vita). A pasta tem as tabelas de texto do jogo em texto puro
+(`costumequest.STbl`, `costumequestdlc1.STbl`, `cq1patch1.STbl`,
+`cqmobile.STbl`, `cqpc.STbl`); no boot elas são compactadas e entregues no
+lugar das tabelas em francês, e o jogo roda em francês
+(`source/translation.c`). Cada tabela precisa caber no espaço da francesa.
+
+Traduções de fãs feitas para o PC (patches xdelta dos `.~p` da Steam, como a
+PT-BR "Traducao_CQ+DLC_PTBR") viram essa pasta com o conversor, que extrai as
+tabelas dos patches sem precisar do jogo de PC e completa o que faltar com o
+inglês do APK:
+
+```bash
+brew install xdelta
+python3 extras/scripts/translation_from_pc.py <pasta da tradução> CostumeQuestPowerVR.apk translations/ptbr
+```
+
+Copie `translations/ptbr` para `ux0:data/costumequest/translations/ptbr` e
+coloque `language ptbr` no `config.txt`. As fontes do jogo já têm todos os
+acentos do português. O texto gerado é da tradução e do jogo: fica com os
+seus arquivos, não vai para o repositório.
+
 ## Configurações
 
 `ux0:data/costumequest/config.txt` (criado no primeiro boot), uma opção por
@@ -111,6 +136,7 @@ linha no formato `chave valor`:
 | Chave | Valores | Padrão | Efeito |
 | --- | --- | --- | --- |
 | `msaa` | 0, 2, 4 | 2 | Antisserrilhado; 0 alivia a GPU. Vale no próximo boot |
+| `language` | auto, nome de pasta | auto | `auto`: idioma do Vita; `ptbr` (ou outro nome): tradução em `translations/<nome>/`. Vale no próximo boot |
 | `controls` | gamepad, touch | gamepad | `gamepad`: interface e combate no modo controle do jogo, com ícones de botões PlayStation; `touch`: a interface de toque do Android. Vale no próximo boot |
 | `allocator` | fast, newlib | fast | `fast`: alocador de blocos pequenos para o jogo (Lua, partículas…); `newlib`: malloc padrão. Vale no próximo boot |
 | `lua_gcpause`, `lua_gcstepmul` | 50–1000 | 200, 180 | Coletor de lixo do Lua. O jogo original usa pause 0 (o coletor nunca para, e isso custava boa parte do tempo das missões); o port troca por 200, o padrão do Lua. Vale no próximo boot |

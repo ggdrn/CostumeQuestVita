@@ -145,7 +145,10 @@ static int install_icons() {
         return 0;
     }
     memset(icons_data + len, 0, size - len);
-    fdcache_set_apk_overlay(offset, icons_data, size);
+    if (fdcache_set_apk_overlay(offset, icons_data, size) != 0) {
+        l_error("controls_ui: can't serve the icon library");
+        return 0;
+    }
     filelog_printf("controls_ui: icon library (%d symbols, %u of %u bytes) served at APK offset %u\n",
                    icons_movie_count(), (unsigned)len, size, offset);
     return 1;

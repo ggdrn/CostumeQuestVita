@@ -41,8 +41,8 @@ extern FdCacheStats fdcache_stats;
 // The fd is the APK: reads inside zip local headers come from apk_index
 void fdcache_mark_apk(int fd);
 
-// Reads of the APK in [offset, offset + len) return data instead (set once, before the game runs)
-void fdcache_set_apk_overlay(uint32_t offset, const void *data, uint32_t len);
+// Reads of the APK in [offset, offset + len) return data instead (before the game runs); 0 on success
+int fdcache_set_apk_overlay(uint32_t offset, const void *data, uint32_t len);
 
 void fdcache_attach(int fd);
 

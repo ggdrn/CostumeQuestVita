@@ -24,6 +24,11 @@ void apk_index_init(const char *apk_path, const char *index_path);
 // Finds a stored file of the game data zip: APK offset and size of its data; 0 on success
 int apk_index_find(const char *apk_path, const char *name, uint32_t *data_offset, uint32_t *size);
 
+// Same for several files in one pass over the central directory; returns how
+// many were found (size 0 = not found or compressed)
+int apk_index_find_many(const char *apk_path, int n_names, const char *const *names,
+                        uint32_t *data_offsets, uint32_t *sizes);
+
 // Copies n bytes at APK offset pos if they lie in a known local header: 1, else 0
 int apk_index_read(uint32_t pos, void *dst, size_t n);
 

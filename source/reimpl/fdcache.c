@@ -98,13 +98,36 @@ void fdcache_attach(int fd) {
     table_lock_put();
 }
 
-static uint32_t overlay_off, overlay_len;
-static const uint8_t *overlay_data;
+// APK ranges whose bytes the port replaces (set before the game runs)
+#define MAX_OVERLAYS 16
+typedef struct {
+    uint32_t off, len;
+    const uint8_t *data;
+} Overlay;
+static Overlay overlays[MAX_OVERLAYS];
+static int overlay_count;
 
-void fdcache_set_apk_overlay(uint32_t offset, const void *data, uint32_t len) {
-    overlay_off = offset;
-    overlay_data = data;
-    overlay_len = len;
+int fdcache_set_apk_overlay(uint32_t offset, const void *data, uint32_t len) {
+    if (overlay_count >= MAX_OVERLAYS || !len)
+        return -1;
+    for (int i = 0; i < overlay_count; i++)
+        if (offset < overlays[i].off + overlays[i].len && overlays[i].off < offset + len)
+            return -1; // overlapping
+    overlays[overlay_count++] = (Overlay){ offset, len, data };
+    return 0;
+}
+
+// The overlay covering pos, else the distance to the next one (in *gap; 0 = none)
+static const Overlay *overlay_at(off_t pos, off_t *gap) {
+    *gap = 0;
+    for (int i = 0; i < overlay_count; i++) {
+        const Overlay *o = &overlays[i];
+        if (pos >= o->off && pos < (off_t)o->off + o->len)
+            return o;
+        if (o->off > pos && (*gap == 0 || o->off - pos < *gap))
+            *gap = o->off - pos;
+    }
+    return NULL;
 }
 
 void fdcache_mark_apk(int fd) {
@@ -233,17 +256,19 @@ ssize_t read_soloader(int fd, void *buf, size_t count) {
     while (done < count) {
         size_t want = count - done;
         // File data replaced by the port: never the card's bytes
-        if (c->is_apk && overlay_len) {
-            off_t ov_end = (off_t)overlay_off + overlay_len;
-            if (c->pos >= overlay_off && c->pos < ov_end) {
-                size_t n = ov_end - c->pos < (off_t)want ? (size_t)(ov_end - c->pos) : want;
-                memcpy((uint8_t *)buf + done, overlay_data + (c->pos - overlay_off), n);
+        if (c->is_apk && overlay_count) {
+            off_t gap;
+            const Overlay *o = overlay_at(c->pos, &gap);
+            if (o) {
+                off_t end = (off_t)o->off + o->len;
+                size_t n = end - c->pos < (off_t)want ? (size_t)(end - c->pos) : want;
+                memcpy((uint8_t *)buf + done, o->data + (c->pos - o->off), n);
                 done += n;
                 c->pos += n;
                 continue;
             }
-            if (c->pos < overlay_off && c->pos + (off_t)want > overlay_off)
-                want = overlay_off - c->pos;
+            if (gap && gap < (off_t)want)
+                want = gap;
         }
         // Big reads go straight to the card
         if (want >= FDCACHE_BLOCK_SIZE) {
