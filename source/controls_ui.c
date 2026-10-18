@@ -41,6 +41,8 @@
 #include "utils/settings.h"
 
 #include <kubridge.h>
+#include <psp2/ctrl.h>
+
 #include "apk_index.h"
 #include "icons_movie.h"
 #include "reimpl/fdcache.h"
@@ -171,6 +173,73 @@ static void patch_icons() {
     hook_addr(bind, (uintptr_t)TextureBindFile_hook);
 }
 
+/*
+ * Battle input diagnostics: what the battle code sees when buttons are
+ * pressed (VirtualGamepad state bytes), its input state and minigame.
+ */
+
+#define BATTLE_LOG_MAX 600
+#define VG_FIRST 160
+#define VG_LAST  300
+
+static void (*orig_battle_input)(const uint8_t *pad);
+static volatile int32_t *battle_input_state, *battle_minigame;
+static volatile uint8_t *battle_mg_buttons, *battle_mg_success, *battle_mg_failed;
+static int battle_log_count;
+
+static void Battle_HandleInput_hook(const uint8_t *pad) {
+    static uint8_t last[VG_LAST];
+    static int32_t last_state = -100, last_mg = -100, last_gp = -1;
+    static uint8_t last_btn[12], last_ok = 0xFF, last_fail = 0xFF;
+
+    if (battle_log_count < BATTLE_LOG_MAX) {
+        int32_t st = *battle_input_state, mg = *battle_minigame, gp = is_gamepad ? *is_gamepad : -1;
+        if (st != last_state || mg != last_mg || gp != last_gp || memcmp(last_btn, (const void *)battle_mg_buttons, 12)
+            || *battle_mg_success != last_ok || *battle_mg_failed != last_fail) {
+            filelog_printf("battle: input state %d, minigame %d, gamepad flag %d, mg buttons %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x, success %d failed %d\n",
+                           st, mg, gp,
+                           battle_mg_buttons[0], battle_mg_buttons[1], battle_mg_buttons[2], battle_mg_buttons[3],
+                           battle_mg_buttons[4], battle_mg_buttons[5], battle_mg_buttons[6], battle_mg_buttons[7],
+                           battle_mg_buttons[8], battle_mg_buttons[9], battle_mg_buttons[10], battle_mg_buttons[11],
+                           *battle_mg_success, *battle_mg_failed);
+            last_state = st; last_mg = mg; last_gp = gp;
+            memcpy(last_btn, (const void *)battle_mg_buttons, 12);
+            last_ok = *battle_mg_success; last_fail = *battle_mg_failed;
+            battle_log_count++;
+        }
+        // Controller state bytes that changed since the last call
+        char diff[400];
+        int n = 0;
+        for (int i = VG_FIRST; i < VG_LAST && n < (int)sizeof(diff) - 16; i++)
+            if (pad[i] != last[i])
+                n += snprintf(diff + n, sizeof(diff) - n, " %d:%d", i, pad[i]);
+        if (n) {
+            SceCtrlData ctrl;
+            sceCtrlPeekBufferPositive(0, &ctrl, 1);
+            filelog_printf("battle: pad%s (vita buttons 0x%05x)\n", diff, (unsigned)ctrl.buttons);
+            battle_log_count++;
+        }
+        memcpy(last + VG_FIRST, pad + VG_FIRST, VG_LAST - VG_FIRST);
+    }
+    orig_battle_input(pad);
+}
+
+static void hook_battle_diagnostics() {
+    uintptr_t fn = so_symbol(&so_mod, "_Z18Battle_HandleInputRK14VirtualGamepad");
+    battle_input_state = (void *)so_symbol(&so_mod, "g_BattleInputState");
+    battle_minigame = (void *)so_symbol(&so_mod, "g_BattleMiniGame");
+    battle_mg_buttons = (void *)so_symbol(&so_mod, "g_BattleMiniGameButtons");
+    battle_mg_success = (void *)so_symbol(&so_mod, "g_BattleMiniGameSuccess");
+    battle_mg_failed = (void *)so_symbol(&so_mod, "g_BattleMiniGameFailed");
+    if (!fn || !battle_input_state || !battle_minigame || !battle_mg_buttons || !battle_mg_success || !battle_mg_failed) {
+        l_error("controls_ui: battle symbols missing");
+        return;
+    }
+    orig_battle_input = (void *)hook_arm_trampoline(&so_mod, fn, (uintptr_t)Battle_HandleInput_hook);
+    if (!orig_battle_input)
+        l_error("controls_ui: can't hook Battle_HandleInput");
+}
+
 void controls_ui_frame() {
     if (setting_controls_gamepad && is_gamepad)
         *is_gamepad = 1;
@@ -178,6 +247,7 @@ void controls_ui_frame() {
 
 void controls_ui_patch() {
     hook_flash_log();
+    hook_battle_diagnostics();
     if (setting_controls_gamepad) {
         patch_gamepad_flag();
         patch_icons();
