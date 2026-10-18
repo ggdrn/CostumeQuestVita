@@ -11,6 +11,7 @@
 #include "reimpl/fdcache.h"
 
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/unistd.h>
 #include <stdlib.h>
@@ -41,8 +42,20 @@
 #define ANDROID_SAVE_DIR "/sdcard/dfp/cq-droid/_write"
 #define VITA_SAVE_DIR DATA_PATH "save"
 
+// Files the port writes for the game (controls_ui.c), found through its
+// loose-file lookup: /sdcard/dfp/cq-droid/Data/UI/Vita_... only
+#define ANDROID_PORT_UI "/sdcard/dfp/cq-droid/Data/UI/Vita_"
+#define VITA_PORT_UI    DATA_PATH "Data/UI/Vita_"
+
 const char *io_path(const char *path, char *buf, size_t size) {
     static int logged = 0;
+    if (path && strncasecmp(path, ANDROID_PORT_UI, sizeof(ANDROID_PORT_UI) - 1) == 0) {
+        snprintf(buf, size, "%s%s", VITA_PORT_UI, path + sizeof(ANDROID_PORT_UI) - 1);
+        static int ui_logged = 0;
+        if (ui_logged++ < 10)
+            filelog_printf("port ui path: %s -> %s", path, buf);
+        return buf;
+    }
     size_t n = sizeof(ANDROID_SAVE_DIR) - 1;
     if (!path || strncmp(path, ANDROID_SAVE_DIR, n) != 0 || (path[n] != '/' && path[n] != 0))
         return path;

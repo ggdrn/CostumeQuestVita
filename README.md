@@ -129,6 +129,7 @@ linha no formato `chave valor`:
 | Chave | Valores | Padrão | Efeito |
 | --- | --- | --- | --- |
 | `msaa` | 0, 2, 4 | 2 | Antisserrilhado; 0 alivia a GPU. Vale no próximo boot |
+| `controls` | gamepad, touch | gamepad | `gamepad`: interface e combate no modo controle do jogo, com ícones de botões PlayStation; `touch`: a interface de toque do Android. Vale no próximo boot |
 | `allocator` | fast, newlib | fast | `fast`: alocador de blocos pequenos para o jogo (Lua, partículas…); `newlib`: malloc padrão. Vale no próximo boot |
 | `lua_gcpause`, `lua_gcstepmul` | 50–1000 | 200, 180 | Coletor de lixo do Lua. O jogo original usa pause 0 (o coletor nunca para, e isso custava boa parte do tempo das missões); o port troca por 200, o padrão do Lua. Vale no próximo boot |
 | `profiler` | 0, 1, 2 | 0 | 1: mede as etapas do quadro (marcadores do motor) no `debug.log`; 2: também cada chamada Lua (deixa o jogo bem mais lento) |
@@ -148,9 +149,14 @@ analógicos de verdade. Padrão:
 | L3 / R3 | Touch traseiro, quadrante inferior esquerdo / direito |
 | D-pad, analógicos | D-pad, analógicos |
 
-**Combate:** a versão Android só tem interface de toque nas batalhas
-(ataques, especiais e defesa por toque/gesto). No Vita elas são jogadas na
-tela de toque frontal; fora do combate dá para jogar só com os botões.
+**Modo controle (`controls gamepad`, em desenvolvimento no branch `feat_controles`):**
+o jogo traz o caminho de console de todas as telas (o mesmo da versão OUYA),
+escolhido por `VirtualGamepadManager::m_bIsGamepad`. O port mantém esse modo
+ligado e monta no boot `Data/UI/Vita_ControllerIcons` (só referências às
+texturas que já estão no APK): os HUDs importam dele tanto os botões PlayStation
+(`BUTTON_A`, `BUTTON_DPad*`…) quanto os símbolos de toque (`SPECIAL_*`,
+`MINIGAME_*`…), que no Android ficavam separados. As mensagens do Flash
+(Scaleform) vão para o `debug.log` (`flash[...]`).
 
 Remapeável no `config.txt` com `map_a`, `map_b`, `map_x`, `map_y`,
 `map_back`, `map_start`, `map_lb`, `map_rb`, `map_lt`, `map_rt`, `map_l3`,
