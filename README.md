@@ -130,8 +130,8 @@ linha no formato `chave valor`:
 | --- | --- | --- | --- |
 | `msaa` | 0, 2, 4 | 2 | Antisserrilhado; 0 alivia a GPU. Vale no próximo boot |
 | `allocator` | fast, newlib | fast | `fast`: alocador de blocos pequenos para o jogo (Lua, partículas…); `newlib`: malloc padrão. Vale no próximo boot |
-| `lua_gcpause`, `lua_gcstepmul` | 50–1000 | 200, 200 | Coletor de lixo do Lua (padrão do Lua). Pause maior = coleta menos vezes, usa mais memória. Vale no próximo boot |
-| `profiler` | 0, 1 | 1 (testes) | Mede as etapas do quadro usando os marcadores do próprio motor (`ThreadMarker`) e grava no `debug.log` |
+| `lua_gcpause`, `lua_gcstepmul` | 50–1000 | 200, 180 | Coletor de lixo do Lua. O jogo original usa pause 0 (o coletor nunca para, e isso custava boa parte do tempo das missões); o port troca por 200, o padrão do Lua. Vale no próximo boot |
+| `profiler` | 0, 1, 2 | 1 (testes) | 1: mede as etapas do quadro (marcadores do motor) no `debug.log`; 2: também cada chamada Lua (deixa o jogo bem mais lento) |
 | `fps_cap` | 60, 45, 30, 0 | 60 | Limite de FPS. 60 e 30 travados no vsync (1 ou 2 refreshes por quadro); 45 e 0 (sem limite) sem vsync |
 
 ## Controles

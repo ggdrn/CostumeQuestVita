@@ -24,6 +24,7 @@
 
 #include <psp2/kernel/processmgr.h>
 
+#include <kubridge.h>
 #include <so_util/so_util.h>
 
 #include "utils/filelog.h"
@@ -149,7 +150,7 @@ static void pop_frame(CallStack *cs, uint64_t now) {
 }
 
 static void call_hook(lua_State *L, lua_Debug *ar) {
-    if (!setting_profiler || !waitstats_is_main())
+    if (setting_profiler < 2 || !waitstats_is_main())
         return;
     uint64_t now = sceKernelGetProcessTimeWide();
     CallStack *cs = stack_of(L);
@@ -180,18 +181,63 @@ static lua_State *newstate_hook(lua_Alloc f, void *ud) {
     lua_State *L = orig_newstate(f, ud);
     if (!L)
         return L;
-    if (setting_lua_gcpause != 200)
-        p_gc(L, LUA_GCSETPAUSE, setting_lua_gcpause);
-    if (setting_lua_gcstepmul != 200)
-        p_gc(L, LUA_GCSETSTEPMUL, setting_lua_gcstepmul);
-    // Coroutines created later inherit the hook
-    p_sethook(L, call_hook, LUA_MASKCALL | LUA_MASKRET, 0);
-    filelog_printf("luaprof: lua_State %p (gc pause %d, stepmul %d)\n", L,
-                   setting_lua_gcpause, setting_lua_gcstepmul);
+    // Timing every call costs ~25us each (~5 ms/frame in the neighbourhood):
+    // only with "profiler 2". Coroutines created later inherit the hook.
+    if (setting_profiler >= 2)
+        p_sethook(L, call_hook, LUA_MASKCALL | LUA_MASKRET, 0);
+    filelog_printf("luaprof: lua_State %p%s\n", L, setting_profiler >= 2 ? ", timing Lua calls" : "");
     return L;
 }
 
+/*
+ * Lua_NewState(), the game's wrapper around lua_newstate, then sets the GC
+ * pause to 0 (a new collection cycle starts as soon as one ends, so the
+ * collector never stops) and the step multiplier to 180. On the Vita's CPU
+ * that constant collection is most of the "Mission lua" stage, so the two
+ * immediates are replaced with lua_gcpause / lua_gcstepmul.
+ */
+#define LUA_NEWSTATE_WRAPPER 0x6e9d28
+#define GC_PAUSE_INSN        0x6e9d48 // mov r2, #0
+#define GC_STEPMUL_INSN      0x6e9d58 // mov r2, #180
+
+// ARM "mov r2, #imm" if imm is encodable, else 0
+static uint32_t mov_r2_imm(uint32_t imm) {
+    for (uint32_t rot = 0; rot < 16; rot++) {
+        uint32_t v = (imm << (2 * rot)) | (rot ? imm >> (32 - 2 * rot) : 0); // rotate left
+        if (v <= 0xFF)
+            return 0xE3A02000 | (rot << 8) | v;
+    }
+    return 0;
+}
+
+static void patch_gc_params() {
+    uintptr_t wrapper = so_symbol(&so_mod, "_Z12Lua_NewStatePFPvS_S_jjES_PFiP9lua_StateE");
+    if (!wrapper) {
+        l_error("luaprof: Lua_NewState not found");
+        return;
+    }
+    uint32_t *pause = (uint32_t *)(wrapper - LUA_NEWSTATE_WRAPPER + GC_PAUSE_INSN);
+    uint32_t *stepmul = (uint32_t *)(wrapper - LUA_NEWSTATE_WRAPPER + GC_STEPMUL_INSN);
+    // Not every value fits an ARM immediate: round down to one that does
+    while (!mov_r2_imm(setting_lua_gcpause))
+        setting_lua_gcpause--;
+    while (!mov_r2_imm(setting_lua_gcstepmul))
+        setting_lua_gcstepmul--;
+    uint32_t new_pause = mov_r2_imm(setting_lua_gcpause);
+    uint32_t new_stepmul = mov_r2_imm(setting_lua_gcstepmul);
+    if (*pause != 0xE3A02000 || *stepmul != 0xE3A020B4 || !new_pause || !new_stepmul) {
+        l_error("luaprof: Lua_NewState GC code not as expected (0x%08x 0x%08x)", *pause, *stepmul);
+        return;
+    }
+    kuKernelCpuUnrestrictedMemcpy(pause, &new_pause, 4);
+    kuKernelCpuUnrestrictedMemcpy(stepmul, &new_stepmul, 4);
+    filelog_printf("luaprof: Lua GC pause 0 -> %d, stepmul 180 -> %d\n",
+                   setting_lua_gcpause, setting_lua_gcstepmul);
+}
+
 void luaprof_patch() {
+    patch_gc_params();
+
     uintptr_t newstate = so_symbol(&so_mod, "lua_newstate");
     p_sethook = (void *)so_symbol(&so_mod, "lua_sethook");
     p_getinfo = (void *)so_symbol(&so_mod, "lua_getinfo");
@@ -206,7 +252,7 @@ void luaprof_patch() {
 }
 
 void luaprof_log(uint32_t frames) {
-    if (!setting_profiler)
+    if (setting_profiler < 2)
         return;
     // Racy with the main thread, but only ever loses a call or two
     static FuncStat snap[MAX_FUNCS];

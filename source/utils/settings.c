@@ -28,7 +28,7 @@ void settings_reset() {
     setting_profiler = 1; // TODO: 0 for release 0.1
     setting_fast_alloc = 1;
     setting_lua_gcpause = 200;
-    setting_lua_gcstepmul = 200;
+    setting_lua_gcstepmul = 180; // the game's own value
 }
 
 static void settings_validate() {
@@ -39,7 +39,7 @@ static void settings_validate() {
     if (setting_lua_gcpause < 50 || setting_lua_gcpause > 1000)
         setting_lua_gcpause = 200;
     if (setting_lua_gcstepmul < 50 || setting_lua_gcstepmul > 1000)
-        setting_lua_gcstepmul = 200;
+        setting_lua_gcstepmul = 180;
 }
 
 void settings_load() {
@@ -56,7 +56,7 @@ void settings_load() {
             int value = atoi(text);
             if      (strcmp("msaa", key) == 0)    setting_msaa = value;
             else if (strcmp("fps_cap", key) == 0) setting_fps_cap = value;
-            else if (strcmp("profiler", key) == 0) setting_profiler = value != 0;
+            else if (strcmp("profiler", key) == 0) setting_profiler = value;
             else if (strcmp("lua_gcpause", key) == 0) setting_lua_gcpause = value;
             else if (strcmp("lua_gcstepmul", key) == 0) setting_lua_gcstepmul = value;
             else if (strcmp("allocator", key) == 0) setting_fast_alloc = strcmp(text, "newlib") != 0;
@@ -80,11 +80,11 @@ void settings_save() {
     if (config) {
         fprintf(config, "%s %d\n", "msaa", setting_msaa);
         fprintf(config, "%s %d\n", "fps_cap", setting_fps_cap);
-        // 1: log the game's stage timings in debug.log (small CPU cost)
+        // 1: log the game's stage timings in debug.log (small CPU cost); 2: also time every Lua call (slow)
         fprintf(config, "%s %d\n", "profiler", setting_profiler);
         // fast: small-block allocator for the game; newlib: plain malloc (next boot)
         fprintf(config, "%s %s\n", "allocator", setting_fast_alloc ? "fast" : "newlib");
-        // Lua garbage collector (Lua defaults 200 / 200; higher pause = collects less often), next boot
+        // Lua garbage collector: the game used pause 0 (never stops); Lua's default is 200. Next boot
         fprintf(config, "%s %d\n", "lua_gcpause", setting_lua_gcpause);
         fprintf(config, "%s %d\n", "lua_gcstepmul", setting_lua_gcstepmul);
         // Controls: game controller input <- Vita source (cross circle square
