@@ -116,6 +116,7 @@ set(SOURCES
     source/patch.c
     source/fmod_audio.c
     source/vita_pad.c
+    source/controls_ui.c
     source/port_menu.c
     source/apk_extract.c
     source/apk_index.c

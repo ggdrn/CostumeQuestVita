@@ -19,6 +19,7 @@ int setting_msaa;
 int setting_fps_cap;
 int setting_profiler;
 int setting_fast_alloc;
+int setting_controls_gamepad;
 int setting_lua_gcpause;
 int setting_lua_gcstepmul;
 
@@ -27,6 +28,7 @@ void settings_reset() {
     setting_fps_cap = 60;
     setting_profiler = 0;
     setting_fast_alloc = 1;
+    setting_controls_gamepad = 1;
     setting_lua_gcpause = 200;
     setting_lua_gcstepmul = 180; // the game's own value
 }
@@ -59,6 +61,7 @@ void settings_load() {
             else if (strcmp("profiler", key) == 0) setting_profiler = value;
             else if (strcmp("lua_gcpause", key) == 0) setting_lua_gcpause = value;
             else if (strcmp("lua_gcstepmul", key) == 0) setting_lua_gcstepmul = value;
+            else if (strcmp("controls", key) == 0) setting_controls_gamepad = strcmp(text, "touch") != 0;
             else if (strcmp("allocator", key) == 0) setting_fast_alloc = strcmp(text, "newlib") != 0;
             else if (!vita_pad_set_mapping(key, text))
                 filelog_printf("settings: unknown key \"%s\"\n", key);
@@ -70,8 +73,9 @@ void settings_load() {
     // about, keeping the user's values
     settings_save();
 
-    filelog_printf("settings: msaa %d, fps_cap %d, profiler %d, allocator %s\n", setting_msaa, setting_fps_cap,
-                   setting_profiler, setting_fast_alloc ? "fast" : "newlib");
+    filelog_printf("settings: msaa %d, fps_cap %d, profiler %d, allocator %s, controls %s\n", setting_msaa,
+                   setting_fps_cap, setting_profiler, setting_fast_alloc ? "fast" : "newlib",
+                   setting_controls_gamepad ? "gamepad" : "touch");
 }
 
 void settings_save() {
@@ -80,6 +84,8 @@ void settings_save() {
     if (config) {
         fprintf(config, "%s %d\n", "msaa", setting_msaa);
         fprintf(config, "%s %d\n", "fps_cap", setting_fps_cap);
+        // gamepad: PlayStation-button UI and prompts; touch: the Android touch UI (next boot)
+        fprintf(config, "%s %s\n", "controls", setting_controls_gamepad ? "gamepad" : "touch");
         // 1: log the game's stage timings in debug.log (small CPU cost); 2: also time every Lua call (slow)
         fprintf(config, "%s %d\n", "profiler", setting_profiler);
         // fast: small-block allocator for the game; newlib: plain malloc (next boot)
