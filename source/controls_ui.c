@@ -37,10 +37,13 @@
  *   the prompt's icon is drawn). During a minigame a face button becomes a
  *   tap on the slot of that button's icon (asked to the game, so a wrong
  *   button misses, as a wrong tap would) and the D-pad becomes a swipe.
+ *   Timed and mash prompts use press edges; the movement minigame uses the left
+ *   stick as a local cursor, without feeding Android touch events.
  */
 
 #include "controls_ui.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -98,7 +101,9 @@ static void hook_flash_log() {
  */
 
 #define RPI_FUNC 0x6e4b6c
-static const uint32_t rpi_clear_gamepad[] = { 0x6e67c4, 0x6e691c, 0x6e6a20 };
+static const struct { uint32_t offset, expected; } rpi_clear_gamepad[] = {
+    { 0x6e67c4, 0xe5c02000 }, { 0x6e691c, 0xe5c40000 }, { 0x6e6a20, 0x15ca4000 }
+};
 static volatile uint8_t *is_gamepad;
 
 static void patch_gamepad_flag() {
@@ -109,13 +114,17 @@ static void patch_gamepad_flag() {
         return;
     }
     const uint32_t nop = 0xE320F000;
-    for (int i = 0; i < sizeof(rpi_clear_gamepad) / sizeof(*rpi_clear_gamepad); i++) {
-        uint32_t *insn = (uint32_t *)(func + rpi_clear_gamepad[i] - RPI_FUNC);
-        // strb rX, [rY] (any condition): keep away from another build
-        if ((*insn & 0x0FF00FFF) != 0x05C00000) {
-            l_error("controls_ui: unexpected insn 0x%08x at _ReadPhysicalInputs+0x%x", *insn, rpi_clear_gamepad[i] - RPI_FUNC);
-            continue;
+    // Validate the whole patch before writing any instruction.
+    for (unsigned i = 0; i < sizeof(rpi_clear_gamepad) / sizeof(*rpi_clear_gamepad); i++) {
+        uint32_t *insn = (uint32_t *)(func + rpi_clear_gamepad[i].offset - RPI_FUNC);
+        if (*insn != rpi_clear_gamepad[i].expected) {
+            l_error("controls_ui: unsupported _ReadPhysicalInputs instruction at +0x%x",
+                    rpi_clear_gamepad[i].offset - RPI_FUNC);
+            return;
         }
+    }
+    for (unsigned i = 0; i < sizeof(rpi_clear_gamepad) / sizeof(*rpi_clear_gamepad); i++) {
+        void *insn = (void *)(func + rpi_clear_gamepad[i].offset - RPI_FUNC);
         kuKernelCpuUnrestrictedMemcpy(insn, &nop, sizeof(nop));
     }
     *is_gamepad = 1;
@@ -202,12 +211,14 @@ static volatile int32_t *battle_input_state, *battle_minigame;
 static volatile uint8_t *battle_mg_buttons, *battle_mg_success, *battle_mg_failed;
 static int battle_log_count;
 
+static void battle_console_input(const uint8_t *pad);
+
 static void Battle_HandleInput_hook(const uint8_t *pad) {
     static uint8_t last[VG_LAST];
     static int32_t last_state = -100, last_mg = -100, last_gp = -1;
     static uint8_t last_btn[12], last_ok = 0xFF, last_fail = 0xFF;
 
-    if (battle_log_count < BATTLE_LOG_MAX) {
+    if (setting_profiler && battle_log_count < BATTLE_LOG_MAX) {
         int32_t st = *battle_input_state, mg = *battle_minigame, gp = is_gamepad ? *is_gamepad : -1;
         if (st != last_state || mg != last_mg || gp != last_gp || memcmp(last_btn, (const void *)battle_mg_buttons, 12)
             || *battle_mg_success != last_ok || *battle_mg_failed != last_fail) {
@@ -236,7 +247,7 @@ static void Battle_HandleInput_hook(const uint8_t *pad) {
         }
         memcpy(last + VG_FIRST, pad + VG_FIRST, VG_LAST - VG_FIRST);
     }
-    orig_battle_input(pad);
+    battle_console_input(pad);
 }
 
 /*
@@ -284,33 +295,165 @@ static void patch_battle_hud() {
 
 typedef struct { float x, y; } Vec2;
 static int (*orig_get_input_type)(const uint8_t *pad, Vec2 *pos, float *dist);
-static int (*button_overlap)(int prompt, const Vec2 *pos);
-static volatile uint32_t *battle_mg_array; // Array<BattlePrompt>: count << 6, capacity, data
+typedef struct { float x0, y0, x1, y1; } HitBox;
+// C++ aggregate return uses an explicit output pointer in this ARM ABI.
+static void (*get_hit_box)(HitBox *out, int slot);
+static void (*orig_mouse_position)(Vec2 *out, const void *rules, int pixels);
+static int battle_cursor_active;
+static Vec2 battle_cursor;
+static Vec2 battle_previous_stick;
+static int battle_motion_initialized;
+static int battle_motion_touch;
+static float battle_previous_timer;
+static volatile float *battle_mg_timer;
+static int battle_stick_direction = INPUT_NONE;
+static int battle_stick_swipe = INPUT_NONE;
+
+static Vec2 battle_left_stick(const uint8_t *pad) {
+    Vec2 v;
+    memcpy(&v.x, pad + 108, sizeof(float));
+    memcpy(&v.y, pad + 112, sizeof(float));
+    float length = sqrtf(v.x * v.x + v.y * v.y);
+    if (!isfinite(length) || length < 0.20f)
+        return (Vec2){0, 0};
+    if (length > 1.0f) {
+        v.x /= length;
+        v.y /= length;
+    }
+    return v;
+}
+
+static void battle_update_stick_direction(Vec2 v) {
+    int direction = battle_stick_direction;
+    float ax = fabsf(v.x), ay = fabsf(v.y);
+    // A held direction never repeats a QTE. Hysteresis suppresses drift
+    // around the threshold; the next flick can follow a return to centre.
+    if (ax < 0.35f && ay < 0.35f)
+        direction = INPUT_NONE;
+    else if (ax >= 0.60f || ay >= 0.60f)
+        direction = ax > ay ? (v.x < 0 ? SWIPE_LEFT : SWIPE_RIGHT)
+                            : (v.y < 0 ? SWIPE_DOWN : SWIPE_UP);
+    battle_stick_swipe = direction != battle_stick_direction ? direction : INPUT_NONE;
+    battle_stick_direction = direction;
+}
+
+static Vec2 battle_motion_cursor(Vec2 v) {
+    // The native routine expands normalized coordinates into 1280x720 and
+    // corrects Y for the Vita's 960x544 viewport. Feed ONE stick unit, not
+    // hundreds of pixels: the gamepad gain is 0.12 (touch gain is 0.0007).
+    return (Vec2){0.5f + v.x / 1280.0f,
+                  0.5f - v.y * (960.0f / 544.0f) / 1280.0f};
+}
+
+static void mouse_position_hook(Vec2 *out, const void *rules, int pixels) {
+    if (battle_cursor_active == 2 && !pixels) {
+        orig_mouse_position(out, rules, pixels);
+        // Real gestures retain the original touch gain while console mode
+        // stays active (native handler otherwise applies the 0.12 pad gain).
+        const float scale = 0.0007f / 0.12f;
+        out->x = 0.5f + (out->x - 0.5f) * scale;
+        out->y = 0.5f + (out->y - 0.5f) * scale;
+        return;
+    }
+    if (battle_cursor_active == 1 && !pixels) {
+        *out = battle_cursor;
+        return;
+    }
+    orig_mouse_position(out, rules, pixels);
+}
+
+static void battle_console_input(const uint8_t *pad) {
+    Vec2 stick = battle_left_stick(pad);
+    // Sample even outside QTEs: a stick held during target selection must
+    // not become a new directional press when the minigame starts.
+    battle_update_stick_direction(stick);
+    if (setting_controls_gamepad && orig_mouse_position && orig_get_input_type &&
+        battle_mg_timer && *battle_input_state == BATTLE_STATE_MINIGAME &&
+        *battle_minigame == 20) {
+        if (pad[184] || pad[234] || pad[284]) {
+            battle_cursor_active = 2;
+            if (!battle_motion_touch || pad[184]) {
+                uint8_t seed[724];
+                Vec2 unused_pos;
+                float unused_dist = 0;
+                memcpy(seed, pad, sizeof(seed));
+                seed[184] = 1; seed[234] = seed[284] = 0;
+                orig_get_input_type(seed, &unused_pos, &unused_dist);
+            }
+            battle_motion_touch = !pad[234];
+            battle_motion_initialized = 0;
+            orig_battle_input(pad);
+            battle_cursor_active = 0;
+            return;
+        }
+        battle_motion_touch = 0;
+        uint32_t copy[181]; // VirtualGamepad: 724 bytes (Clear/Update)
+        uint8_t *input = (uint8_t *)copy;
+        float timer = *battle_mg_timer;
+        memcpy(copy, pad, sizeof(copy));
+        // _UpdateMinigame subtracts dt: only an increase denotes a restart.
+        if (!battle_motion_initialized || timer > battle_previous_timer) {
+            // No entry impulse, including a stick already held at QTE start.
+            battle_previous_stick = stick;
+            battle_motion_initialized = 1;
+        }
+        battle_previous_timer = timer;
+        float dx = stick.x - battle_previous_stick.x;
+        float dy = stick.y - battle_previous_stick.y;
+        int moved = dx * dx + dy * dy >= 0.0001f;
+        input[184] = input[234] = input[284] = 0;
+        battle_cursor_active = 1;
+        if (moved) {
+            // Seed the engine's previous position with its own tap routine.
+            // It may have been reset or left at another QTE's screen position.
+            // This synthetic tap is never passed to Battle_HandleInput/SDL.
+            Vec2 unused_pos;
+            float unused_dist = 0;
+            battle_cursor = battle_motion_cursor(battle_previous_stick);
+            input[184] = 1;
+            orig_get_input_type(input, &unused_pos, &unused_dist);
+            input[184] = 0;
+            input[284] = 1;
+            battle_previous_stick = stick;
+        }
+        battle_cursor = battle_motion_cursor(stick);
+        orig_battle_input(input);
+        battle_cursor_active = 0;
+        return;
+    }
+    battle_motion_initialized = 0;
+    battle_motion_touch = 0;
+    orig_battle_input(pad);
+}
+
+typedef struct {
+    uint32_t count_flags, capacity;
+    const int32_t *data;
+} BattlePromptArray;
+static volatile BattlePromptArray *battle_mg_array;
 
 static int find_slot(int prompt, Vec2 *out) {
-    // The icons are ~100 units wide: a coarse grid finds them; then centre it
-    float x0 = 0, x1 = -1, y0 = 0, y1 = -1;
-    for (int y = 8; y < 720; y += 16) {
-        for (int x = 8; x < 1280; x += 16) {
-            Vec2 p = { (float)x, (float)y };
-            if (button_overlap(prompt, &p)) {
-                if (x1 < 0) { x0 = x1 = x; y0 = y1 = y; }
-                if (x < x0) x0 = x;
-                if (x > x1) x1 = x;
-                y1 = y;
-            }
-        }
+    uint32_t count = battle_mg_array->count_flags >> 6;
+    const int32_t *data = battle_mg_array->data;
+    // The original overlap routine searches the same array for the base
+    // A/B/X/Y prompt and passes its index to Battle_GetHitBox (slots 0..3).
+    for (uint32_t i = 0; data && i < count && i < 4; i++) {
+        if (data[i] != prompt)
+            continue;
+        HitBox box;
+        get_hit_box(&box, i);
+        out->x = (box.x0 + box.x1) * 0.5f;
+        out->y = (box.y0 + box.y1) * 0.5f;
+        return 1;
     }
-    if (x1 < 0)
-        return 0;
-    out->x = (x0 + x1) / 2;
-    out->y = (y0 + y1) / 2;
-    return 1;
+    return 0;
 }
 
 static void log_prompts(const char *what) {
-    uint32_t count = battle_mg_array[0] >> 6;
-    const int32_t *data = (const int32_t *)(uintptr_t)battle_mg_array[2];
+    if (!setting_profiler)
+        return;
+    uint32_t count = battle_mg_array->count_flags >> 6;
+    const int32_t *data = battle_mg_array->data;
     char buf[96];
     int n = 0;
     for (uint32_t i = 0; i < count && i < 8 && data; i++)
@@ -321,23 +464,16 @@ static void log_prompts(const char *what) {
 }
 
 static int Battle_GetInputType_hook(const uint8_t *pad, Vec2 *pos, float *dist) {
-    static uint32_t last_ctrl;
-    SceCtrlData ctrl;
-    sceCtrlPeekBufferPositive(0, &ctrl, 1);
-    uint32_t pressed = ctrl.buttons & ~last_ctrl;
-    last_ctrl = ctrl.buttons;
-
-    int type = orig_get_input_type(pad, pos, dist);
     if (*battle_input_state != BATTLE_STATE_MINIGAME)
-        return type;
-    if (type != INPUT_NONE) {
-        char what[64];
-        snprintf(what, sizeof(what), "touch input %d at %.0f,%.0f", type, pos->x, pos->y);
-        log_prompts(what);
-        return type;
-    }
+        return orig_get_input_type(pad, pos, dist);
+    // Preserve physical touchscreen gestures; mapped buttons win when pressed
+    // in the same frame. The synthetic motion cursor remains private.
+    if (!setting_controls_gamepad || battle_cursor_active)
+        return orig_get_input_type(pad, pos, dist);
+    int type = INPUT_NONE;
 
-    // Face buttons: the controller's A/B/X/Y "pressed this frame" bytes (after remapping)
+    // Press, mash and meter prompts all require a fresh mapped press.
+    // Holding a meter button must not automatically hit its timing window.
     for (int b = 0; b < 4; b++) {
         if (!pad[170 + b])
             continue;
@@ -351,36 +487,47 @@ static int Battle_GetInputType_hook(const uint8_t *pad, Vec2 *pos, float *dist) 
         return INPUT_TAP;
     }
 
-    // D-pad: swipes
-    static const struct { uint32_t button; int swipe; const char *name; } dirs[] = {
-        { SCE_CTRL_LEFT, SWIPE_LEFT, "left" }, { SCE_CTRL_RIGHT, SWIPE_RIGHT, "right" },
-        { SCE_CTRL_UP, SWIPE_UP, "up" }, { SCE_CTRL_DOWN, SWIPE_DOWN, "down" },
-    };
+    // Use the game's edge state, not a separately sampled physical D-pad.
+    // VirtualGamepad BUTTON_DPadUp/Right/Down/Left are indices 12..15.
+    static const int swipes[] = { SWIPE_UP, SWIPE_RIGHT, SWIPE_DOWN, SWIPE_LEFT };
     for (int i = 0; i < 4; i++) {
-        if (!(pressed & dirs[i].button))
+        if (!pad[180 + i])
             continue;
         pos->x = 640;
         pos->y = 360;
         *dist = 200;
-        char what[64];
-        snprintf(what, sizeof(what), "d-pad %s -> swipe %d", dirs[i].name, dirs[i].swipe);
-        log_prompts(what);
-        return dirs[i].swipe;
+        return swipes[i];
     }
+    if (battle_stick_swipe != INPUT_NONE) {
+        pos->x = 640;
+        pos->y = 360;
+        *dist = 200;
+        return battle_stick_swipe;
+    }
+    if (pad[184] || pad[234] || pad[284])
+        return orig_get_input_type(pad, pos, dist);
     return type;
 }
 
 static void patch_battle_minigames() {
     uintptr_t fn = so_symbol(&so_mod, "_Z19Battle_GetInputTypeRK14VirtualGamepadR4vec2Rf");
-    button_overlap = (void *)so_symbol(&so_mod, "_Z23Battle_GetButtonOverlap12BattlePromptRK4vec2");
+    get_hit_box = (void *)so_symbol(&so_mod, "_Z16Battle_GetHitBox21BattleButtonPositions");
     battle_mg_array = (void *)so_symbol(&so_mod, "g_BattleMiniGameButtons");
-    if (!fn || !button_overlap || !battle_mg_array || !battle_input_state || !battle_minigame) {
+    battle_mg_timer = (void *)so_symbol(&so_mod, "g_BattleMiniGameTimer");
+    if (!fn || !get_hit_box || !battle_mg_array || !battle_input_state || !battle_minigame || !battle_mg_timer) {
         l_error("controls_ui: minigame symbols missing");
         return;
     }
+    uintptr_t mouse = so_symbol(&so_mod, "_ZNK9SeedRules22GetMouseScreenPositionEb");
+    if (mouse)
+        orig_mouse_position = (void *)hook_arm_trampoline(&so_mod, mouse, (uintptr_t)mouse_position_hook);
+    if (!orig_mouse_position)
+        l_error("controls_ui: continuous movement minigame bridge unavailable");
     orig_get_input_type = (void *)hook_arm_trampoline(&so_mod, fn, (uintptr_t)Battle_GetInputType_hook);
     if (!orig_get_input_type)
         l_error("controls_ui: can't hook Battle_GetInputType");
+    else
+        filelog_printf("controls_ui: motion bridge v2 (countdown timer)\n");
 }
 
 static void hook_battle_diagnostics() {

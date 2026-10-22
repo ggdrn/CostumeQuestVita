@@ -157,7 +157,7 @@ analógicos de verdade. Padrão:
 | L3 / R3 | Touch traseiro, quadrante inferior esquerdo / direito |
 | D-pad, analógicos | D-pad, analógicos |
 
-**Modo controle (`controls gamepad`, em desenvolvimento no branch `feat_controles`):**
+**Modo console (`controls gamepad`):**
 o jogo traz o caminho de console de todas as telas (o mesmo da versão OUYA),
 escolhido por `VirtualGamepadManager::m_bIsGamepad`. O port mantém esse modo
 ligado e, quando o jogo lê do APK a biblioteca de ícones
@@ -165,7 +165,17 @@ ligado e, quando o jogo lê do APK a biblioteca de ícones
 `Shared/ControllerIcons.swf`), entrega no lugar uma versão com os botões
 PlayStation (`BUTTON_A`, `BUTTON_DPad*`…) e os símbolos de toque
 (`SPECIAL_*`, `MINIGAME_*`…), montada no boot só com referências às texturas
-que já estão no APK. O VPK desse branch é `build/costume_quest_controls.vpk`. As mensagens do Flash
+que já estão no APK. A variante desta revisão é `build/costume_quest_console.vpk`
+(`./build-vita.sh Release console`). O toque frontal fica disponível como alternativa nesse modo;
+o touch traseiro continua disponível para LT/RT/L3/R3.
+Nos minigames, os botões e o direcional usam o estado já processado pelo jogo;
+prompts direcionais também aceitam movimentos do analógico esquerdo.
+O minigame de movimento contínuo usa deslocamentos do analógico esquerdo
+na escala nativa: entrar na ação ou segurar uma direção não carrega a barra.
+Veja o [mapeamento completo de combate](docs/controles-console.md#comandos-de-combate).
+Pressionar e repetir continuam exigindo novas pressões, inclusive nas barras
+de timing. `controls touch` seleciona a interface Android no próximo boot.
+As mensagens do Flash
 (Scaleform) vão para o `debug.log` (`flash[...]`).
 
 Remapeável no `config.txt` com `map_a`, `map_b`, `map_x`, `map_y`,
@@ -207,9 +217,10 @@ a primeira vez que cada shader aparece é lenta.
   `gl_init`).
 - **Shaders:** `Data/Shaders/*.fxo` contêm GLSL ES; a compatibilidade com o
   tradutor GLSL do vitaGL ainda precisa ser verificada.
-- **Controles:** o mapeamento por keycodes Android é um palpite baseado no
-  controle OUYA; o jogo tem uma classe `SDLGamepad` que pode precisar de hooks
-  para analógicos de verdade.
+- **Controles:** o caminho SDL e os imports de ícones foram verificados contra
+  este APK, com testes locais da ponte de input. A cobertura de todas as telas,
+  fantasias e habilidades precisa de teste no Vita; compilação não comprova
+  funcionamento integral. Veja [a auditoria e o roteiro](docs/controles-console.md).
 - **Saves:** o jogo grava em `/sdcard/dfp/cq-droid/_write`; o loader
   redireciona só essa pasta para `ux0:data/costumequest/save/`
   (`source/reimpl/io.c`). O resto de `/sdcard` continua inexistente, como o

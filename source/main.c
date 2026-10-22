@@ -7,6 +7,7 @@
 #include "utils/init.h"
 #include "utils/glutil.h"
 #include "utils/logger.h"
+#include "utils/settings.h"
 
 #include <malloc.h>
 #include <pthread.h>
@@ -49,8 +50,6 @@ so_module so_mod;
 // recursion in Lua and Scaleform, so give it more.
 #define SDL_THREAD_STACK_SIZE (4 * 1024 * 1024)
 
-static void (*Java_SDLActivity_onNativeKeyDown)(JNIEnv *env, jclass cls, int keycode);
-static void (*Java_SDLActivity_onNativeKeyUp)(JNIEnv *env, jclass cls, int keycode);
 static void (*Java_SDLActivity_onNativeTouch)(JNIEnv *env, jclass cls, int touch_device, int pointer, int action, float x, float y, float p);
 
 static const char *cq_language() {
@@ -172,8 +171,6 @@ int main() {
     l_info("JNI_OnLoad()");
     JNI_OnLoad(&jvm);
 
-    Java_SDLActivity_onNativeKeyDown = (void *)so_symbol(&so_mod, "Java_org_libsdl_app_SDLActivity_onNativeKeyDown");
-    Java_SDLActivity_onNativeKeyUp = (void *)so_symbol(&so_mod, "Java_org_libsdl_app_SDLActivity_onNativeKeyUp");
     Java_SDLActivity_onNativeTouch = (void *)so_symbol(&so_mod, "Java_org_libsdl_app_SDLActivity_onNativeTouch");
 
     void (*Java_CqActivity_dfNativeSetLanguage)(JNIEnv *env, jclass cls, jstring lang) =
@@ -206,7 +203,7 @@ int main() {
 
     Java_SDLActivity_nativeSetMaxScreenResolution(&jni, FAKE_CLASS, SCREEN_W, SCREEN_H);
 
-    // Touchscreen reported as absent so the game keeps its gamepad (OUYA) UI
+    // The Vita touchscreen remains available alongside the console controller.
     Java_CqActivity_setDeviceInfo(&jni, FAKE_CLASS,
                                   jni->NewStringUTF(&jni, "Sony"),
                                   jni->NewStringUTF(&jni, "vita"),
@@ -214,7 +211,7 @@ int main() {
                                   jni->NewStringUTF(&jni, "PlayStation Vita"),
                                   jni->NewStringUTF(&jni, "vita"),
                                   jni->NewStringUTF(&jni, "4.4.2"),
-                                  JNI_FALSE);
+                                  JNI_TRUE);
 
     // SDLSurface.surfaceChanged()
     l_info("SDLSurface.surfaceChanged(%dx%d)", SCREEN_W, SCREEN_H);
@@ -231,55 +228,18 @@ int main() {
     sceKernelExitDeleteThread(0);
 }
 
-/*
- * Input: SDLSurface forwards Android key codes and normalized touches.
- * The OUYA controller reaches the game as plain key events (BUTTON_A, DPAD_*),
- * so the Vita pad is fed through the same path.
- * Controls are polled once per frame from the swap hook in patch.c.
- */
-
-void controls_handler_key(int32_t keycode, ControlsAction action) {
-    // The Vita buttons reach the game as an SDL game controller (vita_pad.c);
-    // sending them as Android keys too would double every press
-    return;
-    if (action == CONTROLS_ACTION_DOWN)
-        Java_SDLActivity_onNativeKeyDown(&jni, FAKE_CLASS, keycode);
-    else if (action == CONTROLS_ACTION_UP)
-        Java_SDLActivity_onNativeKeyUp(&jni, FAKE_CLASS, keycode);
-}
+/* Buttons and sticks use SDL GameController exclusively (vita_pad.c). */
+void controls_handler_key(int32_t keycode, ControlsAction action) {}
 
 void controls_handler_touch(int32_t id, float x, float y, ControlsAction action) {
-    // MotionEvent: ACTION_DOWN 0, ACTION_UP 1, ACTION_MOVE 2
     int android_action;
     switch (action) {
         case CONTROLS_ACTION_DOWN: android_action = 0; break;
         case CONTROLS_ACTION_UP:   android_action = 1; break;
-        default:                   android_action = 2; break;
+        default:                  android_action = 2; break;
     }
     Java_SDLActivity_onNativeTouch(&jni, FAKE_CLASS, 0, id, android_action,
                                    x / SCREEN_W, y / SCREEN_H, 1.0f);
 }
 
-// Android has no analog path to the game here: the left stick emulates the
-// D-pad, like the OUYA controller does in its system menus.
-// TODO: check whether SDLGamepad::UpdateDeviceState_Joystick can be fed
-//       real analog values instead.
-void controls_handler_analog(ControlsStickId which, float x, float y, ControlsAction action) {
-    // Sticks are real analog axes now (vita_pad.c)
-    return;
-    if (which != CONTROLS_STICK_LEFT)
-        return;
-
-    static bool up, down, left, right;
-    const float threshold = 0.5f;
-
-    bool n_up = y < -threshold, n_down = y > threshold;
-    bool n_left = x < -threshold, n_right = x > threshold;
-
-    if (n_up != up)       controls_handler_key(AKEYCODE_DPAD_UP,    n_up    ? CONTROLS_ACTION_DOWN : CONTROLS_ACTION_UP);
-    if (n_down != down)   controls_handler_key(AKEYCODE_DPAD_DOWN,  n_down  ? CONTROLS_ACTION_DOWN : CONTROLS_ACTION_UP);
-    if (n_left != left)   controls_handler_key(AKEYCODE_DPAD_LEFT,  n_left  ? CONTROLS_ACTION_DOWN : CONTROLS_ACTION_UP);
-    if (n_right != right) controls_handler_key(AKEYCODE_DPAD_RIGHT, n_right ? CONTROLS_ACTION_DOWN : CONTROLS_ACTION_UP);
-
-    up = n_up; down = n_down; left = n_left; right = n_right;
-}
+void controls_handler_analog(ControlsStickId which, float x, float y, ControlsAction action) {}
