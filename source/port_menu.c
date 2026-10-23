@@ -26,7 +26,6 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/processmgr.h>
 
-#include "vita_pad.h"
 #include "utils/filelog.h"
 #include "utils/settings.h"
 
@@ -89,81 +88,23 @@ static void draw_text(int x, int y, uint32_t color, const char *text) {
  * Menu model
  */
 
-typedef enum { ITEM_FPS, ITEM_MSAA, ITEM_PROFILER, ITEM_HEADER, ITEM_MAP, ITEM_RESET, ITEM_CLOSE } ItemType;
+typedef enum { ITEM_FPS, ITEM_MSAA, ITEM_PROFILER, ITEM_CLOSE } ItemType;
 
 typedef struct {
     ItemType type;
-    int map; // ITEM_MAP: mapping index
 } Item;
 
-static Item items[32];
+static Item items[4];
 static int item_count;
 
 static const int fps_values[] = { 60, 45, 30, 0 };
 static const int msaa_values[] = { 0, 2, 4 };
-
-// Game controller input -> what it does in Costume Quest
-static const struct { const char *key, *label; } map_labels[] = {
-    { "a",     "Cross (confirm / jump)" },
-    { "b",     "Circle (back)" },
-    { "x",     "Square" },
-    { "y",     "Triangle" },
-    { "back",  "Select" },
-    { "start", "Start (pause)" },
-    { "lb",    "L1" },
-    { "rb",    "R1" },
-    { "lt",    "L2" },
-    { "rt",    "R2" },
-    { "l3",    "L3" },
-    { "r3",    "R3" },
-    { "guide", "PS" },
-};
-
-static const struct { const char *name, *label; } source_labels[] = {
-    { "none",     "None" },
-    { "cross",    "Cross" },
-    { "circle",   "Circle" },
-    { "square",   "Square" },
-    { "triangle", "Triangle" },
-    { "start",    "Start" },
-    { "select",   "Select" },
-    { "l",        "L" },
-    { "r",        "R" },
-    { "up",       "Up" },
-    { "down",     "Down" },
-    { "left",     "Left" },
-    { "right",    "Right" },
-    { "rear_tl",  "Rear upper left" },
-    { "rear_tr",  "Rear upper right" },
-    { "rear_bl",  "Rear lower left" },
-    { "rear_br",  "Rear lower right" },
-};
-
-static const char *map_label(int i) {
-    const char *key = vita_pad_map_key(i);
-    for (int k = 0; k < sizeof(map_labels) / sizeof(*map_labels); k++)
-        if (strcmp(map_labels[k].key, key) == 0)
-            return map_labels[k].label;
-    return key;
-}
-
-static const char *source_label(int src) {
-    const char *name = vita_pad_source_name(src);
-    for (int k = 0; k < sizeof(source_labels) / sizeof(*source_labels); k++)
-        if (strcmp(source_labels[k].name, name) == 0)
-            return source_labels[k].label;
-    return name;
-}
 
 static void build_items() {
     item_count = 0;
     items[item_count++] = (Item){ ITEM_FPS };
     items[item_count++] = (Item){ ITEM_MSAA };
     items[item_count++] = (Item){ ITEM_PROFILER };
-    items[item_count++] = (Item){ ITEM_HEADER };
-    for (int i = 0; i < vita_pad_map_count() && item_count < 29; i++)
-        items[item_count++] = (Item){ ITEM_MAP, i };
-    items[item_count++] = (Item){ ITEM_RESET };
     items[item_count++] = (Item){ ITEM_CLOSE };
 }
 
@@ -188,11 +129,6 @@ static void change(Item *it, int dir) {
         case ITEM_PROFILER:
             setting_profiler = !setting_profiler;
             break;
-        case ITEM_MAP: {
-            int n = vita_pad_source_count();
-            vita_pad_map_set(it->map, (vita_pad_map_get(it->map) + dir + n) % n);
-            break;
-        }
         default:
             break;
     }
@@ -230,17 +166,6 @@ static void render(int sel) {
             case ITEM_PROFILER:
                 label = "Profiler (debug.log)";
                 snprintf(value, sizeof(value), "< %s >", setting_profiler ? "On" : "Off");
-                break;
-            case ITEM_HEADER:
-                draw_text(x, y + 4, COL_TITLE, "Controls (game input <- Vita button)");
-                y += LINE_H + 4;
-                continue;
-            case ITEM_MAP:
-                label = map_label(it->map);
-                snprintf(value, sizeof(value), "< %s >", source_label(vita_pad_map_get(it->map)));
-                break;
-            case ITEM_RESET:
-                label = "Restore default controls";
                 break;
             case ITEM_CLOSE:
                 label = "Save and resume";
@@ -320,8 +245,6 @@ void port_menu_run() {
     filelog_printf("port menu: opened");
     build_items();
     int sel = 0;
-    while (items[sel].type == ITEM_HEADER)
-        sel++;
 
     wait_release();
     uint32_t old = 0;
@@ -348,17 +271,15 @@ void port_menu_run() {
             continue;
 
         if (pressed & SCE_CTRL_UP) {
-            do sel = (sel + item_count - 1) % item_count; while (items[sel].type == ITEM_HEADER);
+            sel = (sel + item_count - 1) % item_count;
         }
         if (pressed & SCE_CTRL_DOWN) {
-            do sel = (sel + 1) % item_count; while (items[sel].type == ITEM_HEADER);
+            sel = (sel + 1) % item_count;
         }
         if (pressed & SCE_CTRL_LEFT)
             change(&items[sel], -1);
         if (pressed & (SCE_CTRL_RIGHT | SCE_CTRL_CROSS)) {
-            if (items[sel].type == ITEM_RESET)
-                vita_pad_reset_mapping();
-            else if (items[sel].type == ITEM_CLOSE && (pressed & SCE_CTRL_CROSS))
+            if (items[sel].type == ITEM_CLOSE && (pressed & SCE_CTRL_CROSS))
                 done = 1;
             else
                 change(&items[sel], +1);

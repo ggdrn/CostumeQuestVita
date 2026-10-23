@@ -58,8 +58,6 @@ All port-menu labels are in English; the game's language is configured separatel
 - **FPS limit:** 60, 45, 30 or Unlimited. Default: 30. Changes apply immediately.
 - **Antialiasing (MSAA):** Off, 2x or 4x. Default: Off. Restart to apply changes.
 - **Profiler (debug.log):** enable or disable stage timing diagnostics.
-- **Controls:** map each game input to a Vita button or rear-touch quadrant.
-- **Restore default controls:** reset button mappings only.
 - **Save and resume:** save settings and return to the game.
 
 Use Up/Down to select, Left/Right or Cross to change, and Circle or Start to
@@ -127,7 +125,7 @@ mapping. Front touch is an alternative. Combat input is blocked while the
 dialog is open, and holding the escape command does not stack or immediately
 reopen confirmation dialogs.
 
-Mappings can also be changed in `config.txt` with `map_a`, `map_b`, `map_x`,
+Mappings can be changed manually in `config.txt` with `map_a`, `map_b`, `map_x`,
 `map_y`, `map_back`, `map_start`, `map_lb`, `map_rb`, `map_lt`, `map_rt`,
 `map_l3`, `map_r3` and `map_guide`. Available sources are:
 

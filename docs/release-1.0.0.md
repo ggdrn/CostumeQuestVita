@@ -21,8 +21,8 @@ Padrões para novas configurações: `fps_cap 30`, `msaa 0`, `profiler 0`,
 Atualizações preservam os valores existentes no `config.txt`. Para adotar os
 padrões de vídeo e desligar o diagnóstico numa instalação já usada nos testes,
 abra o port menu com L + R + Start e escolha FPS limit 30, MSAA Off e Profiler
-Off. Alterar MSAA requer reabrir o jogo. Restore default controls restaura
-apenas os mapeamentos de controle.
+Off. Alterar MSAA requer reabrir o jogo. O port menu contém apenas as opções
+de vídeo, profiler e retorno ao jogo; os mapeamentos existentes são mantidos.
 
 ## Alterações consolidadas
 

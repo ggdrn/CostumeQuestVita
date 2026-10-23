@@ -4,7 +4,8 @@
 
 - Consolidated the PS Vita port for the tested PowerVR APK installation.
 - Set new-install defaults to 30 FPS, MSAA off and profiling off.
-- Translated the port settings menu into English and used PlayStation button labels.
+- Translated the port settings menu into English.
+- Limited the port menu to FPS, MSAA, profiling and resuming the game; removed button remapping from this menu.
 - Corrected remaining PlayStation prompts and interaction icon sizing.
 - Fixed notebook mission scrolling and escape confirmation handling.
 - Corrected excessive particle preparation and added gradual settling for ambient leaves.

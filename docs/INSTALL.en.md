@@ -23,8 +23,8 @@ values and mappings are preserved when updating.
 
 Press L + R + Start to open the English port menu. Use Up/Down to select,
 Left/Right or Cross to change, and Circle or Start to save and resume.
-MSAA changes take effect after restarting the game. Restore default controls
-resets button mappings only.
+MSAA changes take effect after restarting the game. Button remapping is not
+part of the port menu; existing mappings remain unchanged.
 
 If updating from a diagnostic build, choose FPS limit 30, MSAA Off and
 Profiler Off in the port menu for the release configuration. The game's
