@@ -18,6 +18,7 @@
 int setting_msaa;
 int setting_fps_cap;
 int setting_profiler;
+int setting_particle_leaves;
 int setting_fast_alloc;
 int setting_controls_gamepad;
 char setting_language[32];
@@ -25,9 +26,10 @@ int setting_lua_gcpause;
 int setting_lua_gcstepmul;
 
 void settings_reset() {
-    setting_msaa = 2;
-    setting_fps_cap = 60;
+    setting_msaa = 0;
+    setting_fps_cap = 30;
     setting_profiler = 0;
+    setting_particle_leaves = 1; // progressive environmental leaves; native remains selectable
     setting_fast_alloc = 1;
     setting_controls_gamepad = 1;
     strcpy(setting_language, "auto");
@@ -37,9 +39,9 @@ void settings_reset() {
 
 static void settings_validate() {
     if (setting_msaa != 0 && setting_msaa != 2 && setting_msaa != 4)
-        setting_msaa = 2;
+        setting_msaa = 0;
     if (setting_fps_cap != 0 && setting_fps_cap != 30 && setting_fps_cap != 45 && setting_fps_cap != 60)
-        setting_fps_cap = 60;
+        setting_fps_cap = 30;
     if (setting_lua_gcpause < 50 || setting_lua_gcpause > 1000)
         setting_lua_gcpause = 200;
     if (setting_lua_gcstepmul < 50 || setting_lua_gcstepmul > 1000)
@@ -61,6 +63,7 @@ void settings_load() {
             if      (strcmp("msaa", key) == 0)    setting_msaa = value;
             else if (strcmp("fps_cap", key) == 0) setting_fps_cap = value;
             else if (strcmp("profiler", key) == 0) setting_profiler = value;
+            else if (strcmp("particle_leaves", key) == 0) setting_particle_leaves = value == 1;
             else if (strcmp("lua_gcpause", key) == 0) setting_lua_gcpause = value;
             else if (strcmp("lua_gcstepmul", key) == 0) setting_lua_gcstepmul = value;
             else if (strcmp("language", key) == 0) snprintf(setting_language, sizeof(setting_language), "%s", text);
@@ -94,6 +97,7 @@ void settings_save() {
         fprintf(config, "%s %s\n", "language", setting_language);
         // 1: log the game's stage timings in debug.log (small CPU cost); 2: also time every Lua call (slow)
         fprintf(config, "%s %d\n", "profiler", setting_profiler);
+        fprintf(config, "%s %d\n", "particle_leaves", setting_particle_leaves);
         // fast: small-block allocator for the game; newlib: plain malloc (next boot)
         fprintf(config, "%s %s\n", "allocator", setting_fast_alloc ? "fast" : "newlib");
         // Lua garbage collector: the game used pause 0 (never stops); Lua's default is 200. Next boot

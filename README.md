@@ -1,19 +1,22 @@
-# Costume Quest — PS Vita (so-loader)
+# Costume Quest — PS Vita 1.0.0
 
-Port experimental do Costume Quest (build Android/OUYA "PowerVR", 2015) para
+Port do Costume Quest (build Android/OUYA "PowerVR", 2015) para
 PS Vita, carregando as bibliotecas ARM originais do APK com
 [so_util](https://github.com/Rinnegatamante/so_util),
 [FalsoJNI](https://github.com/v-atamanenko/FalsoJNI) e
 [vitaGL](https://github.com/Rinnegatamante/vitaGL), a partir do
 [soloader-boilerplate](https://github.com/v-atamanenko/soloader-boilerplate).
 
-**Estado:** esqueleto. Gera o VPK, ainda não foi testado em hardware.
+**Estado:** versão 1.0.0, com testes em Vita e desempenho aceito pelo usuário.
+Padrões: 30 FPS, MSAA desligado, controles PlayStation e port menu em inglês.
+As configurações existentes são preservadas ao atualizar.
+Veja as [notas da versão e instalação](docs/release-1.0.0.md).
 
 ## Como funciona
 
 | Android | No Vita |
 | --- | --- |
-| `libfmodex.so`, `libfmodevent.so`, `libCq.so` | Extraídos do APK no primeiro boot e carregados por so_util em 0x98010000 / 0x98210000 / 0x98410000; imports FMOD do libCq são ligados entre módulos via `DT_NEEDED` |
+| `libfmodex.so`, `libfmodevent.so`, `libCq.so` | Extraídos do APK no primeiro boot e carregados por so_util em 0x98010000 / 0x98810000 / 0x98C10000; imports FMOD do libCq são ligados entre módulos via `DT_NEEDED` |
 | `CqActivity.onCreate` | `main.c`: `dfNativeSetLanguage`, `dfNativeInit`, `setDeviceInfo` |
 | `SDLSurface.surfaceChanged` + `SDLMain` | `onNativeResize(960x544)` e `nativeInit()` em uma thread com 4MB de pilha |
 | EGL do SDL (`SDL_EGL_*`, `Android_GLES_SwapWindow`) | Hooks em `patch.c` → vitaGL (`vglInit` na primeira criação de contexto) |
@@ -31,7 +34,8 @@ inteiro, sem extrair nada.
 
 - [VitaSDK **softfp**](https://github.com/vitasdk-softfp) (GCC 10.3) — as libs
   do APK são `armeabi-v7a` softfp. O VitaSDK hard-float em `~/vitasdk`
-  (GCC 15.2) **não** serve, e não há build softfp para macOS.
+  (GCC 15.2) **não** serve. A versão 1.0 também foi compilada com um SDK softfp
+  local no macOS; as instruções do OrbStack abaixo são uma alternativa.
 - No console: `kubridge.skprx` e `libshacccg.suprx` (compilador de shaders; o
   jogo compila GLSL em tempo de execução).
 
@@ -87,14 +91,14 @@ mudar, o índice é refeito sozinho.
 ## Menu do port
 
 **L + R + Start** abre o menu durante o jogo (o jogo fica pausado enquanto
-ele está aberto):
+ele está aberto). Os rótulos do menu são em inglês:
 
-- **Limite de FPS:** 60, 45, 30 ou sem limite. Vale na hora.
+- **FPS limit:** 60, 45, 30 ou sem limite. Padrão 30; vale na hora.
 - **Antialiasing (MSAA):** desligado, 2x ou 4x. Vale no próximo boot.
-- **Profiler no debug.log:** liga/desliga a medição das etapas do jogo.
+- **Profiler (debug.log):** liga/desliga a medição das etapas do jogo.
 - **Controles:** cada botão do controle do jogo pode vir de qualquer botão do
   Vita ou de um quadrante do touch traseiro.
-- **Restaurar controles padrão**.
+- **Restore default controls:** restaura apenas os mapeamentos.
 
 Cima/Baixo escolhe, Esquerda/Direita (ou X) muda o valor, O ou Start fecha.
 Ao fechar, tudo é gravado no `config.txt`. O Start da combinação não chega ao
@@ -135,13 +139,14 @@ linha no formato `chave valor`:
 
 | Chave | Valores | Padrão | Efeito |
 | --- | --- | --- | --- |
-| `msaa` | 0, 2, 4 | 2 | Antisserrilhado; 0 alivia a GPU. Vale no próximo boot |
+| `msaa` | 0, 2, 4 | 0 | Antisserrilhado; 0 alivia a GPU. Vale no próximo boot |
 | `language` | auto, nome de pasta | auto | `auto`: a tradução em `translations/`, se houver, senão o idioma do Vita; `ptbr` (ou outro nome): tradução em `translations/<nome>/`. Vale no próximo boot |
 | `controls` | gamepad, touch | gamepad | `gamepad`: interface e combate no modo controle do jogo, com ícones de botões PlayStation; `touch`: a interface de toque do Android. Vale no próximo boot |
 | `allocator` | fast, newlib | fast | `fast`: alocador de blocos pequenos para o jogo (Lua, partículas…); `newlib`: malloc padrão. Vale no próximo boot |
 | `lua_gcpause`, `lua_gcstepmul` | 50–1000 | 200, 180 | Coletor de lixo do Lua. O jogo original usa pause 0 (o coletor nunca para, e isso custava boa parte do tempo das missões); o port troca por 200, o padrão do Lua. Vale no próximo boot |
 | `profiler` | 0, 1, 2 | 0 | 1: mede as etapas do quadro (marcadores do motor) no `debug.log`; 2: também cada chamada Lua (deixa o jogo bem mais lento) |
-| `fps_cap` | 60, 45, 30, 0 | 60 | Limite de FPS. 60 e 30 travados no vsync (1 ou 2 refreshes por quadro); 45 e 0 (sem limite) sem vsync |
+| `fps_cap` | 60, 45, 30, 0 | 30 | Limite de FPS. 60 e 30 travados no vsync (1 ou 2 refreshes por quadro); 45 e 0 (sem limite) sem vsync |
+| `particle_leaves` | 0, 1 | 1 | Preparação gradual das folhas ambientais; 0 restaura a preparação contínua no próximo boot |
 
 ## Controles
 
@@ -175,6 +180,16 @@ na escala nativa: entrar na ação ou segurar uma direção não carrega a barra
 Veja o [mapeamento completo de combate](docs/controles-console.md#comandos-de-combate).
 Pressionar e repetir continuam exigindo novas pressões, inclusive nas barras
 de timing. `controls touch` seleciona a interface Android no próximo boot.
+Os ícones embutidos nas interações, nos diálogos, no caderno e na confirmação
+Sim/Não também usam as texturas originais de PS3, inclusive nas telas do DLC.
+O X das interações conserva o tamanho previsto para o botão original. A seleção
+de fantasias também usa PS3 nas referências de controle da biblioteca PC_Keys.
+No caderno, o analógico esquerdo rola as missões ativas e o direito as concluídas;
+as barras e o arraste das páginas por toque também estão disponíveis.
+Na confirmação de fuga, X confirma e círculo cancela (mapeamento padrão);
+o toque funciona como alternativa. Enquanto o modal está aberto, os comandos
+não chegam ao combate. Segurar o comando de fuga não empilha confirmações nem
+reabre a janela antes de soltar os botões.
 As mensagens do Flash
 (Scaleform) vão para o `debug.log` (`flash[...]`).
 
@@ -207,16 +222,17 @@ O jogo compila GLSL em tempo de execução (~1 s por shader no Vita). O vitaGL
 guarda os shaders compilados em `ux0:data/shader_cache/CSTMQST01/`, então só
 a primeira vez que cada shader aparece é lenta.
 
-## Pendências conhecidas
+## Limitações e escopo de validação
 
-- **Nunca rodou em hardware.** A ordem de chamadas imita o Java, mas faltam
-  testes; erros de FalsoJNI (`GetMethodID ... not found`) vão indicar métodos
-  Java ainda não implementados em `source/java.c`.
+- **Testado em hardware:** exploração, rolagem do caderno e desempenho foram
+  acompanhados por capturas e logs do usuário. Isso não comprova uma campanha
+  completa nem todos os cenários do DLC.
 - **Memória:** o OUYA tinha 1GB; o Vita tem bem menos. Texturas e áudio podem
   estourar o heap (`_newlib_heap_size_user` em `main.c`, memória do vitaGL em
   `gl_init`).
-- **Shaders:** `Data/Shaders/*.fxo` contêm GLSL ES; a compatibilidade com o
-  tradutor GLSL do vitaGL ainda precisa ser verificada.
+- **Carregamentos:** transições e primeira compilação de shaders ainda podem
+  causar pausas. As folhas ambientais atingem sua densidade gradualmente nos
+  primeiros segundos, reduzindo os picos de preparação.
 - **Controles:** o caminho SDL e os imports de ícones foram verificados contra
   este APK, com testes locais da ponte de input. A cobertura de todas as telas,
   fantasias e habilidades precisa de teste no Vita; compilação não comprova

@@ -30,11 +30,16 @@
 #include "utils/markers.h"
 #include "utils/luaprof.h"
 #include "controls_ui.h"
+#include "particle_compat.h"
+#include "particle_trace.h"
+#include "particle_progressive.h"
 #include "reimpl/controls.h"
 
 #define SCE_KERNEL_MEMBLOCK_TYPE_USER_RX (0x0C20D050)
 
 #include "utils/logger.h"
+#include "utils/filelog.h"
+#include "reimpl/fdcache.h"
 #include "utils/dialog.h"
 #include "reimpl/sys.h"
 #include <stdbool.h>
@@ -171,10 +176,13 @@ volatile uint32_t frame_count = 0;
 volatile uint64_t frame_work_us = 0;  // game logic + GL submission
 volatile uint64_t frame_swap_us = 0;  // waiting in vglSwapBuffers (GPU / vsync)
 volatile uint32_t frame_max_us = 0;   // slowest whole frame
+static void particle_trace_frame(uint32_t wall_us);
 
 void SDL_EGL_SwapBuffers_hook(void *_this, void *egl_surface) {
 	static uint64_t last_swap_end = 0;
 	static int applied_cap = -1;
+	static uint32_t previous_reads;
+	static uint64_t previous_card_us;
 	uint64_t start = sceKernelGetProcessTimeWide();
 
 	// Frame cap: 60 and 30 are vsync intervals 1 and 2 (each frame held for
@@ -212,7 +220,16 @@ void SDL_EGL_SwapBuffers_hook(void *_this, void *egl_surface) {
 		if (frame > frame_max_us)
 			frame_max_us = frame;
 		frame_count++;
+		particle_trace_frame(frame);
+		if (setting_profiler && frame >= 250000) {
+			filelog_printf("hitch: frame %u ms (game %u + swap %u), process card reads +%u, card IO +%u ms\n",
+			               frame / 1000, work / 1000, (unsigned)((end - start) / 1000),
+			               fdcache_stats.refills - previous_reads,
+			               (unsigned)((fdcache_stats.refill_us - previous_card_us) / 1000));
+		}
 	}
+	previous_reads = fdcache_stats.refills;
+	previous_card_us = fdcache_stats.refill_us;
 	last_swap_end = end;
 }
 
@@ -303,6 +320,288 @@ static void hook_cq(const char *symbol, void *dst) {
 	hook_addr(addr, (uintptr_t)dst);
 }
 
+typedef void (*ParticleWarmup)(void *, const void *, void *, const void *, void *);
+static ParticleWarmup orig_warmup[2];
+static void (*orig_particle_reset)(void *);
+/* ARM C++ destructors return this, unlike an ordinary void C function. */
+static void *(*orig_particle_destruct)(void *);
+static ParticleTrace particle_trace;
+static SceKernelLwMutexWork particle_trace_lock;
+static int particle_trace_ready;
+static uint32_t particle_frame = 1;
+static ParticleProgressive particle_progressive;
+static int particle_progressive_ready;
+static unsigned particle_progressive_records;
+static void (*orig_particle_step)(void *, const void *, float, void *, const void *);
+static const char *(*particle_asset_name)(const void *);
+static uint32_t particle_named_resources[64];
+static unsigned particle_named_count;
+
+static void particle_trace_name(void *instance, uint32_t resource) {
+    if (!particle_asset_name || !(resource & 1)) return;
+    sceKernelLockLwMutex(&particle_trace_lock, 1, NULL);
+    for (unsigned i = 0; i < particle_named_count; ++i) {
+        if (particle_named_resources[i] == resource) {
+            sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+            return;
+        }
+    }
+    if (particle_named_count >= 64) {
+        sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+        return;
+    }
+    particle_named_resources[particle_named_count++] = resource;
+    sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+    /* The current native task still owns the resource reference. Resolve now,
+     * outside our mutex, and copy into the async logger before it can expire.
+     * Never retain the returned native string or resolve it on another thread. */
+    const char *name = particle_asset_name(instance);
+    filelog_printf("particle asset: resource=%08X name=%.384s\n",
+                   resource, name ? name : "(unavailable)");
+}
+
+static void particle_reset_hook(void *instance) {
+    orig_particle_reset(instance);
+    if (!setting_profiler && !setting_particle_leaves) return;
+    uint64_t now = sceKernelGetProcessTimeWide();
+    sceKernelLockLwMutex(&particle_trace_lock, 1, NULL);
+    particle_progressive_cancel(&particle_progressive, (uintptr_t)instance);
+    particle_trace_reset(&particle_trace, (uintptr_t)instance, now);
+    sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+}
+
+static void *particle_destruct_hook(void *instance) {
+    sceKernelLockLwMutex(&particle_trace_lock, 1, NULL);
+    particle_progressive_cancel(&particle_progressive, (uintptr_t)instance);
+    particle_trace_retire(&particle_trace, (uintptr_t)instance);
+    sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+    return orig_particle_destruct(instance);
+}
+
+static void particle_trace_frame(uint32_t wall_us) {
+    static uint64_t last_summary;
+    static unsigned frame_records;
+    if (!particle_trace_ready || (!setting_profiler && !setting_particle_leaves)) return;
+    uint64_t now = sceKernelGetProcessTimeWide();
+    sceKernelLockLwMutex(&particle_trace_lock, 1, NULL);
+    uint32_t frame = particle_frame++;
+    particle_progressive_frame(&particle_progressive, particle_frame);
+    uint32_t calls = particle_trace.frame_calls;
+    uint64_t sum = particle_trace.frame_sum_us;
+    particle_trace.frame_calls = 0;
+    particle_trace.frame_sum_us = 0;
+    int summary = now - last_summary >= 5000000;
+    /* Snapshot counters only; never copy the complete identity table. */
+    uint64_t all_calls = particle_trace.calls, slow = particle_trace.slow;
+    uint64_t total = particle_trace.total_us, max = particle_trace.max_us;
+    unsigned active = particle_trace.active, lost = particle_trace.untracked;
+    unsigned records = particle_trace.records;
+    unsigned pending = particle_progressive_pending(&particle_progressive);
+    unsigned started = particle_progressive.started, completed = particle_progressive.completed;
+    unsigned cancelled = particle_progressive.cancelled, fallback = particle_progressive.fallback;
+    unsigned steps = particle_progressive.steps, max_step = particle_progressive.max_step_us;
+    unsigned overruns = particle_progressive.overruns;
+    sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+    if (!setting_profiler) return;
+    if (calls && wall_us >= 50000 && frame_records++ < PARTICLE_TRACE_RECORDS)
+        filelog_printf("particle frame: id=%u wall_us=%u finished=%u sum_call_us=%llu\n",
+                       frame, wall_us, calls, (unsigned long long)sum);
+    if (summary) {
+        last_summary = now;
+        filelog_printf("particle trace totals: calls=%llu slow=%llu sum_us=%llu max_us=%llu active=%u untracked_resets=%u detail_records=%u\n",
+                       (unsigned long long)all_calls, (unsigned long long)slow,
+                       (unsigned long long)total, (unsigned long long)max,
+                       active, lost, records);
+        if (particle_progressive_ready)
+            filelog_printf("particle leaves totals: started=%u pending=%u completed=%u cancelled=%u fallback=%u steps=%u max_step_us=%u budget_overruns=%u\n",
+                           started, pending, completed, cancelled, fallback, steps, max_step, overruns);
+    }
+}
+
+static void particle_step_hook(void *instance, const void *data, float dt,
+                               void *rng, const void *noise) {
+    ParticleProgressiveTicket ticket;
+    int advance = 0;
+    int32_t state;
+    memcpy(&state, (char *)instance + 8, sizeof(state));
+    if (setting_particle_leaves && data && state <= 2) {
+        sceKernelLockLwMutex(&particle_trace_lock, 1, NULL);
+        /* Only tracked jobs need a generation lookup on this hot path. */
+        int pending = 0;
+        for (unsigned i = 0; i < PARTICLE_PROGRESSIVE_JOBS; ++i)
+            pending |= particle_progressive.jobs[i].instance == (uintptr_t)instance;
+        if (pending) {
+            ParticleTraceEntry identity = particle_trace_find(&particle_trace, (uintptr_t)instance);
+            advance = particle_progressive_reserve(&particle_progressive,
+                (uintptr_t)instance, identity.generation, dt, &ticket);
+        }
+        sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+    }
+    if (!advance) {
+        orig_particle_step(instance, data, dt, rng, noise);
+        return;
+    }
+    uint64_t start = sceKernelGetProcessTimeWide();
+    orig_particle_step(instance, data, dt + ticket.extra, rng, noise);
+    uint64_t elapsed = sceKernelGetProcessTimeWide() - start;
+    sceKernelLockLwMutex(&particle_trace_lock, 1, NULL);
+    int completed = particle_progressive_finish(&particle_progressive, ticket,
+        elapsed > UINT32_MAX ? UINT32_MAX : (uint32_t)elapsed);
+    int log = completed && setting_profiler && particle_progressive_records < 256;
+    if (log) ++particle_progressive_records;
+    sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+    if (log)
+        filelog_printf("particle leaves: complete instance=%08X generation=%u\n",
+                       (unsigned)(uintptr_t)instance, ticket.generation);
+}
+
+static int particle_leaves_start(int kind, void *instance) {
+    if (!particle_progressive_ready || !setting_particle_leaves || kind != 1)
+        return 0;
+    float requested;
+    uint16_t capacity;
+    memcpy(&requested, (char *)instance + 308, sizeof(requested));
+    memcpy(&capacity, (char *)instance + 16, sizeof(capacity));
+    /* Limit progressive settling to the exact asset and parameters tested on Vita. */
+    if (requested != 20.0f || capacity != 661) return 0;
+    const char *name = particle_asset_name(instance);
+    if (!particle_progressive_matches(name, kind, requested, capacity)) return 0;
+    sceKernelLockLwMutex(&particle_trace_lock, 1, NULL);
+    ParticleTraceEntry identity = particle_trace_find(&particle_trace, (uintptr_t)instance);
+    int queued = particle_progressive_start(&particle_progressive,
+        (uintptr_t)instance, identity.generation, requested);
+    int log = queued && setting_profiler && particle_progressive_records < 256;
+    if (log) ++particle_progressive_records;
+    sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+    if (!queued) return 0; // bounded queue full/unknown lifetime: use native warmup
+    float zero = 0;
+    memcpy((char *)instance + 308, &zero, sizeof(zero));
+    if (log)
+        filelog_printf("particle leaves: start instance=%08X generation=%u extra_sim_seconds=20\n",
+                       (unsigned)(uintptr_t)instance, identity.generation);
+    return 1;
+}
+
+static void particle_warmup_timed(int kind, void *instance, const void *data,
+                                void *rng, const void *noise, void *particles) {
+    if (particle_leaves_start(kind, instance)) return;
+    if (!setting_profiler) {
+        orig_warmup[kind](instance, data, rng, noise, particles);
+        return;
+    }
+    float requested;
+    memcpy(&requested, (char *)instance + 308, sizeof(requested));
+    uint16_t before, after, capacity;
+    uint32_t resource;
+    memcpy(&before, (char *)instance + 18, sizeof(before));
+    memcpy(&capacity, (char *)instance + 16, sizeof(capacity));
+    memcpy(&resource, instance, sizeof(resource));
+    uint64_t start = sceKernelGetProcessTimeWide();
+    ParticleTraceEntry identity = {0};
+    uint32_t frame = 0;
+    if (particle_trace_ready) {
+        sceKernelLockLwMutex(&particle_trace_lock, 1, NULL);
+        identity = particle_trace_find(&particle_trace, (uintptr_t)instance);
+        frame = particle_frame;
+        sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+    }
+    /* Exclude bookkeeping from the native routine's measured time. */
+    uint64_t native_start = sceKernelGetProcessTimeWide();
+    orig_warmup[kind](instance, data, rng, noise, particles);
+    uint64_t elapsed = sceKernelGetProcessTimeWide() - native_start;
+    memcpy(&after, (char *)instance + 18, sizeof(after));
+    int detail = 0;
+    uint32_t end_frame = 0;
+    if (particle_trace_ready) {
+        sceKernelLockLwMutex(&particle_trace_lock, 1, NULL);
+        detail = particle_trace_finish(&particle_trace, elapsed);
+        end_frame = particle_frame;
+        sceKernelUnlockLwMutex(&particle_trace_lock, 1);
+    }
+    if (detail) {
+        particle_trace_name(instance, resource);
+        filelog_printf("particle trace: kind=%s instance=%08X generation=%u resource=%08X data=%08X frame=%u end_frame=%u thread=%08X reset_age_ms=%lld requested=%.3f before=%u after=%u capacity=%u rng=%08X noise=%08X buffer=%08X us=%llu\n",
+                       kind ? "particle" : "ribbon", (unsigned)(uintptr_t)instance,
+                       identity.generation, resource, (unsigned)(uintptr_t)data,
+                       frame, end_frame, (unsigned)sceKernelGetThreadId(),
+                       identity.generation ? (long long)((start - identity.reset_us) / 1000) : -1LL,
+                       (double)requested, before, after, capacity,
+                       (unsigned)(uintptr_t)rng, (unsigned)(uintptr_t)noise,
+                       (unsigned)(uintptr_t)particles, (unsigned long long)elapsed);
+    } else if (!particle_trace_ready && elapsed >= 50000)
+        filelog_printf("particle warmup: %s requested %.3f s, took %llu ms\n",
+                       kind ? "particle" : "ribbon", (double)requested,
+                       (unsigned long long)(elapsed / 1000));
+}
+
+static void ribbon_warmup_hook(void *i, const void *d, void *r, const void *n, void *p) {
+    particle_warmup_timed(0, i, d, r, n, p);
+}
+static void particle_warmup_hook(void *i, const void *d, void *r, const void *n, void *p) {
+    particle_warmup_timed(1, i, d, r, n, p);
+}
+
+static void patch_particle_warmup(void) {
+    const char *symbols[] = {
+        "_ZN22ParticleSystemInstance16_WarmupParticlesI11RibbonStateEEvPK18ParticleSystemDataR9FastFRandRK12NoiseMachinePT_",
+        "_ZN22ParticleSystemInstance16_WarmupParticlesI13ParticleStateEEvPK18ParticleSystemDataR9FastFRandRK12NoiseMachinePT_"
+    };
+    uintptr_t addresses[2];
+    uint32_t code[0x208 / 4];
+    /* Validate both before modifying either; do not patch unknown APK code. */
+    for (int i = 0; i < 2; ++i) {
+        addresses[i] = so_symbol(&so_mod, symbols[i]);
+        if (!addresses[i]) {
+            filelog_printf("particle warmup: skipped (missing symbol)\n");
+            return;
+        }
+        memcpy(code, (void *)addresses[i], sizeof(code));
+        if (!particle_warmup_prepare(code, sizeof(code))) {
+            filelog_printf("particle warmup: skipped (unsupported instructions)\n");
+            return;
+        }
+    }
+    uintptr_t reset = so_symbol(&so_mod, "_ZN22ParticleSystemInstance5ResetEv");
+    uintptr_t destruct = so_symbol(&so_mod, "_ZN22ParticleSystemInstanceD1Ev");
+    const uint32_t reset_prefix[] = {0xe92d4010, 0xe1a04000};
+    const uint32_t destruct_prefix[] = {0xe92d4830, 0xe24dd010};
+    if (reset && destruct && !memcmp((void *)reset, reset_prefix, sizeof(reset_prefix)) &&
+        !memcmp((void *)destruct, destruct_prefix, sizeof(destruct_prefix)) &&
+        sceKernelCreateLwMutex(&particle_trace_lock, "particle_trace", 0, 0, NULL) == 0) {
+        orig_particle_reset = (void *)hook_arm_trampoline(&so_mod, reset, (uintptr_t)particle_reset_hook);
+        orig_particle_destruct = (void *)hook_arm_trampoline(&so_mod, destruct, (uintptr_t)particle_destruct_hook);
+        particle_trace_ready = orig_particle_reset && orig_particle_destruct;
+    }
+    uintptr_t get_name = so_symbol(&so_mod, "_ZNK9RsRefBase12GetAssetNameEv");
+    const uint32_t name_prefix[] = {0xe92d4800, 0xe5901000, 0xe3a00000, 0xe3110001};
+    if (particle_trace_ready && get_name &&
+        !memcmp((void *)get_name, name_prefix, sizeof(name_prefix)))
+        particle_asset_name = (void *)get_name;
+    for (int i = 0; i < 2; ++i) {
+        kuKernelCpuUnrestrictedMemcpy((void *)(addresses[i] + 0x2c),
+                                     &code[0x2c / 4], sizeof(uint32_t));
+        orig_warmup[i] = (ParticleWarmup)hook_arm_trampoline(&so_mod, addresses[i],
+            (uintptr_t)(i ? particle_warmup_hook : ribbon_warmup_hook));
+        if (!orig_warmup[i])
+            filelog_printf("particle warmup: timing hook %d unavailable\n", i);
+    }
+    uintptr_t step = so_symbol(&so_mod, "_ZN22ParticleSystemInstance13StepParticlesEPK18ParticleSystemDatafR9FastFRandRK12NoiseMachine");
+    const uint32_t step_prefix[] = {0xe92d4ff0, 0xed2d8b08, 0xe24dd01c, 0xe1a04000};
+    if (orig_warmup[1] && particle_asset_name && step && !memcmp((void *)step, step_prefix, sizeof(step_prefix))) {
+        orig_particle_step = (void *)hook_arm_trampoline(&so_mod, step, (uintptr_t)particle_step_hook);
+        particle_progressive_ready = orig_particle_step != NULL;
+    }
+    particle_progressive_frame(&particle_progressive, particle_frame);
+    filelog_printf("particle leaves progressive v1: %s; %u us shared target, normal-step cap %.6f s; gradual initial density\n",
+                   particle_progressive_ready && setting_particle_leaves ? "enabled" : "disabled",
+                   PARTICLE_PROGRESSIVE_BUDGET_US, (double)PARTICLE_PROGRESSIVE_MAX_DT);
+    filelog_printf("particle trace v2: %s, %u identity slots, %u detail records; native asset names %s\n",
+                   particle_trace_ready ? "enabled with profiler" : "unavailable",
+                   PARTICLE_TRACE_SLOTS, PARTICLE_TRACE_RECORDS,
+                   particle_asset_name ? "enabled" : "unavailable");
+    filelog_printf("particle warmup: requested duration, capped at 90 s (both routines)\n");
+}
+
 void so_patch(void) {
 	kuser_patch();
 
@@ -317,6 +616,7 @@ void so_patch(void) {
 
 	// PlayStation-layout controller UI
 	controls_ui_patch();
+	patch_particle_warmup();
 
 	// EGL / window
 	hook_cq("SDL_EGL_LoadLibrary", SDL_EGL_LoadLibrary_hook);

@@ -6,7 +6,7 @@ endif ()
 
 set(CMAKE_TOOLCHAIN_FILE "$ENV{VITASDK}/share/vita.toolchain.cmake" CACHE PATH "Toolchain file")
 
-project(costume_quest C CXX)
+project(costume_quest VERSION 1.0.0 LANGUAGES C CXX)
 
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
@@ -116,6 +116,12 @@ set(SOURCES
     source/patch.c
     source/fmod_audio.c
     source/vita_pad.c
+    source/utils/log_queue.c
+    source/controls_gfx.c
+    source/controls_compat.c
+    source/particle_compat.c
+    source/particle_trace.c
+    source/particle_progressive.c
     source/controls_ui.c
     source/icons_movie.c
     source/translation.c
@@ -161,7 +167,11 @@ list(APPEND SOURCES
   source/reimpl/controls.h)
 endif()
 
+# Keep finite-value guards and simulated-time accounting in the progressive
+# scheduler valid even though the rest of the release port uses fast math.
+set_source_files_properties(source/particle_progressive.c PROPERTIES COMPILE_FLAGS "-fno-fast-math")
 add_executable(${CMAKE_PROJECT_NAME} ${SOURCES})
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE CQ_PORT_VERSION="${PROJECT_VERSION}")
 
 add_subdirectory(lib/libc_bridge)
 add_dependencies(${CMAKE_PROJECT_NAME} SceLibcBridge)

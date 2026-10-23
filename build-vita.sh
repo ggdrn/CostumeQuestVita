@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds the VPK on macOS through the OrbStack Linux machine "vitadev",
-# which has the softfp VitaSDK in ~/vitasdk-softfp (no macOS build exists).
+# which has the softfp VitaSDK in ~/vitasdk-softfp. A local softfp SDK can
+# alternatively build the project directly with CMake; see docs/release-1.0.0.md.
 #
 #   ./build-vita.sh            # Debug (logs enabled) -> build/costume_quest_debug.vpk
 #   ./build-vita.sh Release    # for playing        -> build/costume_quest.vpk

@@ -10,6 +10,7 @@
  */
 
 #include "utils/filelog.h"
+#include "utils/log_queue.h"
 
 #include <stdarg.h>
 #include <stdbool.h>
@@ -32,7 +33,52 @@
 
 static SceUID log_fd = -1;
 static SceKernelLwMutexWork log_mutex;
+static SceKernelLwMutexWork log_io_mutex;
+static SceUID log_writer = -1;
+static LogQueue pending;
+static atomic_bool log_emergency = ATOMIC_VAR_INIT(false);
 static atomic_bool log_ready = ATOMIC_VAR_INIT(false);
+
+static void write_all(const void *bytes, size_t len) {
+    const uint8_t *p = bytes;
+    while (len) {
+        int n = sceIoWrite(log_fd, p, len);
+        if (n <= 0) break;
+        p += n;
+        len -= n;
+    }
+}
+
+void filelog_flush(void) {
+    if (!atomic_load(&log_ready) || atomic_load(&log_emergency)) return;
+    uint8_t batch[8192];
+    // Only the writer (or an explicit shutdown/crash flush) waits for card IO.
+    sceKernelLockLwMutex(&log_io_mutex, 1, NULL);
+    for (int i = 0; i < LOG_QUEUE_CAPACITY / sizeof(batch); i++) {
+        if (atomic_load(&log_emergency)) break;
+        sceKernelLockLwMutex(&log_mutex, 1, NULL);
+        size_t len = log_queue_take(&pending, batch, sizeof(batch));
+        uint32_t dropped = !pending.count ? pending.dropped : 0;
+        if (!pending.count) pending.dropped = 0;
+        sceKernelUnlockLwMutex(&log_mutex, 1);
+        if (len) write_all(batch, len);
+        if (dropped) {
+            char message[96];
+            int n = sceClibSnprintf(message, sizeof(message), "[log] %u diagnostic lines omitted: queue full\n", dropped);
+            write_all(message, n);
+        }
+        if (len < sizeof(batch)) break;
+    }
+    sceKernelUnlockLwMutex(&log_io_mutex, 1);
+}
+
+static int log_writer_thread(SceSize args, void *argp) {
+    for (;;) {
+        sceKernelDelayThread(20000);
+        filelog_flush();
+    }
+    return 0;
+}
 
 void filelog_init() {
     if (atomic_load(&log_ready))
@@ -50,9 +96,17 @@ void filelog_init() {
 
     // Recursive: the crash handler may log while the crashed thread holds it
     sceKernelCreateLwMutex(&log_mutex, "filelog", SCE_KERNEL_MUTEX_ATTR_RECURSIVE, 0, NULL);
+    sceKernelCreateLwMutex(&log_io_mutex, "filelog IO", SCE_KERNEL_MUTEX_ATTR_RECURSIVE, 0, NULL);
     atomic_store(&log_ready, true);
+    log_writer = sceKernelCreateThread("log writer", log_writer_thread, 0x10000100 + 30,
+                                      32 * 1024, 0, 0, NULL);
+    if (log_writer >= 0 && sceKernelStartThread(log_writer, 0, NULL) < 0) {
+        sceKernelDeleteThread(log_writer);
+        log_writer = -1;
+    }
 
-    filelog_printf("=== Costume Quest so-loader, built " __DATE__ " " __TIME__ " ===\n");
+    filelog_printf("=== Costume Quest Vita " CQ_PORT_VERSION ", built " __DATE__ " " __TIME__ " ===\n");
+    filelog_printf("filelog: %s\n", log_writer >= 0 ? "async writer, 64 KB queue" : "synchronous fallback (writer unavailable)");
 }
 
 void filelog_write(const char *str) {
@@ -78,12 +132,21 @@ void filelog_write(const char *str) {
     int prefix_len = sceClibSnprintf(prefix, sizeof(prefix), "[%8u] ",
                                      (unsigned)(sceKernelGetProcessTimeWide() / 1000));
 
+    char record[sizeof(prefix) + sizeof(line) + 1];
+    memcpy(record, prefix, prefix_len);
+    memcpy(record + prefix_len, line, len);
+    size_t total = prefix_len + len;
+    if (len == 0 || line[len - 1] != '\n') record[total++] = '\n';
+    if (atomic_load(&log_emergency)) {
+        // A fault may have interrupted either logging mutex's owner. Never
+        // wait for that owner to resume to preserve the crash report.
+        write_all(record, total);
+        return;
+    }
     sceKernelLockLwMutex(&log_mutex, 1, NULL);
-    sceIoWrite(log_fd, prefix, prefix_len);
-    sceIoWrite(log_fd, line, len);
-    if (len == 0 || line[len - 1] != '\n')
-        sceIoWrite(log_fd, "\n", 1);
+    log_queue_append(&pending, record, total);
     sceKernelUnlockLwMutex(&log_mutex, 1);
+    if (log_writer < 0) filelog_flush(); // Thread creation failure: preserve logs.
 }
 
 void filelog_printf(const char *fmt, ...) {
@@ -93,7 +156,9 @@ void filelog_printf(const char *fmt, ...) {
     sceClibVsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
+#ifdef DEBUG_SOLOADER
     sceClibPrintf("%s", buf);
+#endif
     filelog_write(buf);
 }
 
@@ -159,6 +224,7 @@ static void crash_handler(KuKernelExceptionContext *ctx) {
     info.size = sizeof(info);
     sceKernelGetThreadInfo(sceKernelGetThreadId(), &info);
 
+    atomic_store(&log_emergency, true);
     filelog_printf("\n!!! CRASH: %s in thread \"%s\" !!!\n", exception_name(ctx->exceptionType), info.name);
     filelog_printf("FAR (accessed address): 0x%08X  FSR: 0x%08X\n", ctx->FAR, ctx->FSR);
 

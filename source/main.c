@@ -154,6 +154,7 @@ static void *sdl_main_thread(void *arg) {
     Java_SDLActivity_nativeInit(&jni, FAKE_CLASS);
     l_info("SDLActivity.nativeInit() returned, exiting");
     fmod_audio_stop();
+    filelog_flush();
     sceKernelExitProcess(0);
     return NULL;
 }

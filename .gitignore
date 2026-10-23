@@ -22,3 +22,5 @@ lib/libc_bridge/out/
 .DS_Store
 .idea/
 .vscode/
+__pycache__/
+*.pyc

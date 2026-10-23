@@ -23,6 +23,7 @@ extern "C" {
 extern int setting_msaa;     // 0, 2 or 4 (applied at boot)
 extern int setting_fps_cap;  // 60, 45, 30 or 0 (unlimited)
 extern int setting_profiler; // game stage timings in debug.log
+extern int setting_particle_leaves; // 1=progressive leaves, 0=native warmup
 extern int setting_lua_gcpause;   // LUA_GCSETPAUSE for every state (200 = Lua default)
 extern int setting_lua_gcstepmul; // LUA_GCSETSTEPMUL
 extern char setting_language[32];   // "auto" or a folder of translations/

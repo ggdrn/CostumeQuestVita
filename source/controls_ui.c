@@ -42,10 +42,13 @@
  */
 
 #include "controls_ui.h"
+#include "controls_compat.h"
+#include "controls_gfx.h"
 
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <so_util/so_util.h>
@@ -163,6 +166,38 @@ static int install_icons() {
     return 1;
 }
 
+/* Install compressed movie overrides before any Flash movie is loaded.
+   The APK and its original data are never changed on disk. */
+static void patch_ui_movies(void) {
+    static const char *entries[] = {
+        "Data/UI/HUDInteractions/Opt/HUDInteractions.gfx",
+        "Data/UI/HUDInteractions_DLC/Opt/HUDInteractions_DLC.gfx",
+        "Data/UI/Notebook_DLC/Opt/Notebook_DLC.gfx",
+    };
+    FILE *apk = fopen(APK_PATH, "rb");
+    if (!apk) { l_error("controls_ui: can't open APK for movie patches"); return; }
+    for (unsigned kind = 0; kind < sizeof(entries) / sizeof(*entries); kind++) {
+        uint32_t offset, size;
+        if (apk_index_find(APK_PATH, entries[kind], &offset, &size) || !size)
+            continue;
+        uint8_t *original = malloc(size), *patched = malloc(size);
+        int ok = original && patched && fseek(apk, offset, SEEK_SET) == 0 &&
+                 fread(original, 1, size, apk) == size &&
+                 controls_gfx_patch(kind, original, size, patched, size) &&
+                 fdcache_set_apk_overlay(offset, patched, size) == 0;
+        free(original);
+        if (ok)
+            filelog_printf("controls_ui: %s -> %s\n", entries[kind],
+                           kind == CQ_GFX_NOTEBOOK_DLC ? "scroll v2 (native update + drag-aware target)" : "full-size PS3 interaction button");
+        else {
+            free(patched);
+            l_error("controls_ui: unsupported movie or failed override: %s", entries[kind]);
+        }
+        // The successful overlay owns patched for the lifetime of the game.
+    }
+    fclose(apk);
+}
+
 // RsRef<Texture> RsRef<Texture>::BindFile(const char *path, bool)
 #define TEX_BINDFILE            0x91aa0c
 #define TEX_DESCRIPTOR_GOT_SLOT 0xc44b04
@@ -173,14 +208,10 @@ static const void **tex_descriptor_slot;
 
 static void *TextureBindFile_hook(const char *path, int flag) {
     char buf[260];
-    const char *base = strrchr(path, '/');
-    base = base ? base + 1 : path;
-    if (strncmp(base, ICONS_PS3_PREFIX, sizeof(ICONS_PS3_PREFIX) - 1) == 0) {
-        snprintf(buf, sizeof(buf), "UI/Flash/PS3_ControllerIcons/%s", base + sizeof(ICONS_PS3_PREFIX) - 1);
-        if (icon_redirects++ < 4)
-            filelog_printf("controls_ui: texture %s -> %s\n", path, buf);
-        path = buf;
-    }
+    const char *resolved = controls_ps3_texture(path, buf, sizeof(buf));
+    if (resolved != path && icon_redirects++ < 16)
+        filelog_printf("controls_ui: texture %s -> %s\n", path, resolved);
+    path = resolved;
     return rs_bind_file(*tex_descriptor_slot, path, flag);
 }
 
@@ -195,6 +226,58 @@ static void patch_icons() {
         return; // the game keeps its touch icons
     tex_descriptor_slot = (const void **)(bind - TEX_BINDFILE + TEX_DESCRIPTOR_GOT_SLOT);
     hook_addr(bind, (uintptr_t)TextureBindFile_hook);
+}
+
+/*
+ * Type-4 (Yes/No) modal input. Let the native Close pop the dialog and run
+ * its callback; the next FlashFrontEnd::Update unloads the movie and restores
+ * exclusive input. Never unload a movie from its own Flash input callback.
+ */
+static void *modal_dialog;
+static void **flash_frontend;
+static int (*modal_active)(const void *dialog);
+static int (*modal_type)(const void *dialog);
+static void (*modal_close)(void *dialog, int result);
+static void (*orig_flash_controller_input)(void *manager, void *movie);
+
+static int is_modal_active(void) {
+    return modal_dialog && modal_active && modal_active(modal_dialog);
+}
+
+static void FlashControllerInput_hook(void *manager, void *movie) {
+    void *frontend = flash_frontend ? *flash_frontend : NULL;
+    if (setting_controls_gamepad && frontend && is_modal_active() &&
+        movie == *(void **)((uint8_t *)frontend + 12) && modal_type(modal_dialog) == 4) {
+        /* FlashMovie's first word is PlayType, not a player index. The
+           modal uses frontend PlayType=1, whose VirtualGamepad starts at
+           FlashManager+2924+724 (HandleControllerInput/Update). */
+        const uint8_t *pad = (const uint8_t *)manager + 2924 + 724;
+        int result = controls_modal_result(4, pad);
+        if (result) {
+            filelog_printf("controls_ui: Yes/No modal -> %s\n", result == 1 ? "yes" : "no");
+            modal_close(modal_dialog, result);
+        }
+        return; // Do not also deliver the same press to ActionScript.
+    }
+    orig_flash_controller_input(manager, movie);
+}
+
+static void patch_modal_input(void) {
+    modal_dialog = (void *)so_symbol(&so_mod, "tModalDialog");
+    modal_active = (void *)so_symbol(&so_mod, "_ZNK11ModalDialog9GetActiveEv");
+    modal_type = (void *)so_symbol(&so_mod, "_ZNK11ModalDialog7GetTypeEv");
+    modal_close = (void *)so_symbol(&so_mod, "_ZN11ModalDialog5CloseE15ModalDialogType");
+    flash_frontend = (void *)so_symbol(&so_mod, "g_pFlashFrontEnd");
+    uintptr_t fn = so_symbol(&so_mod, "_ZN12FlashManager21HandleControllerInputEP10FlashMovie");
+    if (!modal_dialog || !modal_active || !modal_type || !modal_close || !flash_frontend || !fn) {
+        l_error("controls_ui: modal input symbols missing");
+        return;
+    }
+    orig_flash_controller_input = (void *)hook_arm_trampoline(&so_mod, fn, (uintptr_t)FlashControllerInput_hook);
+    if (!orig_flash_controller_input)
+        l_error("controls_ui: can't hook modal controller input");
+    else
+        filelog_printf("controls_ui: Yes/No modal bridge (single dialog)\n");
 }
 
 /*
@@ -247,6 +330,9 @@ static void Battle_HandleInput_hook(const uint8_t *pad) {
         }
         memcpy(last + VG_FIRST, pad + VG_FIRST, VG_LAST - VG_FIRST);
     }
+    static int wait_flee_release;
+    if (controls_battle_block(is_modal_active(), pad, &wait_flee_release))
+        return;
     battle_console_input(pad);
 }
 
@@ -553,10 +639,12 @@ void controls_ui_frame() {
 
 void controls_ui_patch() {
     hook_flash_log();
+    patch_modal_input();
     hook_battle_diagnostics();
     if (setting_controls_gamepad) {
         patch_gamepad_flag();
         patch_icons();
+        patch_ui_movies();
         patch_battle_hud();
         patch_battle_minigames();
     }

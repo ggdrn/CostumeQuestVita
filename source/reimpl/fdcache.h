@@ -11,6 +11,8 @@
  * unbuffered 2-4 byte read() calls. Cheap syscalls on Android, but every
  * sceIoRead goes to the memory card on Vita. read()/lseek() on read-only fds
  * are served from a per-fd buffer instead.
+ * Cache table synchronization never waits for file IO: operations pin their
+ * cache before taking its private lock, and close waits for those pins to drain.
  */
 
 #ifndef SOLOADER_FDCACHE_H

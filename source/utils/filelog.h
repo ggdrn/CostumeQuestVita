@@ -9,8 +9,8 @@
  *        the faulting context to it.
  *
  * DATA_PATH "debug.log" holds the current run, the previous one is kept as
- * DATA_PATH "debug.prev.log". Every line is written straight to the file,
- * so nothing is lost when the game crashes.
+ * DATA_PATH "debug.prev.log". A bounded queue keeps card writes on a background thread.
+ * Normal shutdown drains pending diagnostics; crash reports bypass the queue.
  */
 
 #ifndef SOLOADER_FILELOG_H
@@ -24,11 +24,12 @@ extern "C" {
 #endif
 
 void filelog_init();
+void filelog_flush(void);
 
 // Appends an already formatted string (ANSI color codes are stripped)
 void filelog_write(const char *str);
 
-// printf-style: writes to both the console (sceClibPrintf) and the file
+// printf-style: queues the file record; debug builds also print to console
 void filelog_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 // Describes a code address as "libCq.so+0x1234 (symbol+0x10)"

@@ -56,6 +56,9 @@ typedef struct {
     int ahead;         // size of the next sequential fetch
     int is_apk;        // serve local header reads from apk_index
     SceKernelLwMutexWork lock;
+    unsigned users;   // includes readers waiting for lock; guarded by table_lock
+    int closing;
+    SceUID drained;
 } FdCache;
 
 static FdCache *caches[FDCACHE_MAX_FD];
@@ -63,13 +66,17 @@ static FdCache *caches[FDCACHE_MAX_FD];
 // Guards `caches`: a fd closed on one thread while another reads it must not
 // free the cache under the reader
 static SceKernelLwMutexWork table_lock;
-static volatile int table_lock_ready = 0;
+static volatile int table_lock_ready = 0; // 0=new, 1=initializing, 2=ready
 
 static void table_lock_get() {
-    if (!table_lock_ready) {
+    if (__sync_bool_compare_and_swap(&table_lock_ready, 0, 1)) {
         sceKernelCreateLwMutex(&table_lock, "fdcache_tbl", 0, 0, NULL);
-        table_lock_ready = 1;
+        __sync_synchronize();
+        table_lock_ready = 2;
     }
+    while (table_lock_ready != 2)
+        sceKernelDelayThread(100);
+    __sync_synchronize();
     sceKernelLockLwMutex(&table_lock, 1, NULL);
 }
 
@@ -92,7 +99,16 @@ void fdcache_attach(int fd) {
     for (int i = 0; i < FDCACHE_BLOCKS; i++)
         c->blocks[i].start = -1;
     c->pos = lseek(fd, 0, SEEK_CUR);
-    sceKernelCreateLwMutex(&c->lock, "fdcache", 0, 0, NULL);
+    if (sceKernelCreateLwMutex(&c->lock, "fdcache", 0, 0, NULL) < 0) {
+        free(c);
+        return;
+    }
+    c->drained = sceKernelCreateSema("fdcache_drain", 0, 0, 1, NULL);
+    if (c->drained < 0) {
+        sceKernelDeleteLwMutex(&c->lock);
+        free(c);
+        return;
+    }
     table_lock_get();
     caches[fd] = c;
     table_lock_put();
@@ -146,15 +162,17 @@ void fdcache_detach(int fd) {
     table_lock_get();
     FdCache *c = caches[fd];
     caches[fd] = NULL;
-    if (c) {
-        // Wait for a reader still inside this cache
-        sceKernelLockLwMutex(&c->lock, 1, NULL);
-        sceKernelUnlockLwMutex(&c->lock, 1);
-    }
+    int wait = c && c->users;
+    if (c)
+        c->closing = 1;
     table_lock_put();
     if (!c)
         return;
 
+    // Wait outside the global table lock, including queued readers that pinned c.
+    if (wait)
+        sceKernelWaitSema(c->drained, 1, NULL);
+    sceKernelDeleteSema(c->drained);
     sceKernelDeleteLwMutex(&c->lock);
     for (int i = 0; i < FDCACHE_BLOCKS; i++)
         free(c->blocks[i].buf);
@@ -168,9 +186,20 @@ static FdCache *get_cache_locked(int fd) {
     table_lock_get();
     FdCache *c = caches[fd];
     if (c)
-        sceKernelLockLwMutex(&c->lock, 1, NULL);
+        ++c->users;
     table_lock_put();
+    // A slow read or a queued reader must not stop unrelated file descriptors.
+    if (c)
+        sceKernelLockLwMutex(&c->lock, 1, NULL);
     return c;
+}
+
+static void put_cache(FdCache *c) {
+    sceKernelUnlockLwMutex(&c->lock, 1);
+    table_lock_get();
+    if (--c->users == 0 && c->closing)
+        sceKernelSignalSema(c->drained, 1);
+    table_lock_put();
 }
 
 static ssize_t timed_pread(int fd, void *buf, size_t count, off_t offset) {
@@ -294,7 +323,7 @@ ssize_t read_soloader(int fd, void *buf, size_t count) {
     }
 
     fdcache_stats.last_pos = c->pos;
-    sceKernelUnlockLwMutex(&c->lock, 1);
+    put_cache(c);
 
     fdcache_stats.bytes += done;
     return done;
@@ -327,6 +356,6 @@ off_t lseek_soloader(int fd, off_t offset, int whence) {
         l_warn("lseek(%i, %li, %i): invalid offset", fd, (long)offset, whence);
 
     fdcache_stats.last_pos = c->pos;
-    sceKernelUnlockLwMutex(&c->lock, 1);
+    put_cache(c);
     return ret < 0 ? -1 : ret;
 }
