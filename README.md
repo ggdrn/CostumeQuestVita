@@ -1,246 +1,258 @@
 # Costume Quest — PS Vita 1.0.0
 
-Port do Costume Quest (build Android/OUYA "PowerVR", 2015) para
-PS Vita, carregando as bibliotecas ARM originais do APK com
+PS Vita port of Costume Quest, based on the 2015 Android/OUYA PowerVR build.
+It loads the original ARM libraries from the APK using
 [so_util](https://github.com/Rinnegatamante/so_util),
-[FalsoJNI](https://github.com/v-atamanenko/FalsoJNI) e
-[vitaGL](https://github.com/Rinnegatamante/vitaGL), a partir do
+[FalsoJNI](https://github.com/v-atamanenko/FalsoJNI) and
+[vitaGL](https://github.com/Rinnegatamante/vitaGL), starting from the
 [soloader-boilerplate](https://github.com/v-atamanenko/soloader-boilerplate).
 
-**Estado:** versão 1.0.0, com testes em Vita e desempenho aceito pelo usuário.
-Padrões: 30 FPS, MSAA desligado, controles PlayStation e port menu em inglês.
-As configurações existentes são preservadas ao atualizar.
-Veja as [notas da versão e instalação](docs/release-1.0.0.md).
+**Status:** version 1.0.0, tested on a Vita, with performance accepted on the
+user's tested routes. New configurations default to **30 FPS, MSAA off,
+PlayStation controls and an English port menu**. Updating preserves existing
+settings and mappings.
 
-## Como funciona
+See the [installation guide](docs/INSTALL.en.md), [changelog](CHANGELOG.md)
+and [third-party notices](docs/NOTICE.md).
 
-| Android | No Vita |
-| --- | --- |
-| `libfmodex.so`, `libfmodevent.so`, `libCq.so` | Extraídos do APK no primeiro boot e carregados por so_util em 0x98010000 / 0x98810000 / 0x98C10000; imports FMOD do libCq são ligados entre módulos via `DT_NEEDED` |
-| `CqActivity.onCreate` | `main.c`: `dfNativeSetLanguage`, `dfNativeInit`, `setDeviceInfo` |
-| `SDLSurface.surfaceChanged` + `SDLMain` | `onNativeResize(960x544)` e `nativeInit()` em uma thread com 4MB de pilha |
-| EGL do SDL (`SDL_EGL_*`, `Android_GLES_SwapWindow`) | Hooks em `patch.c` → vitaGL (`vglInit` na primeira criação de contexto) |
-| `AssetManager.openFd` do SDL (`Android_JNI_File*`) | Hooks em `patch.c` → stdio em `ux0:data/costumequest/assets/` |
-| `org.fmod.FMODAudioDevice` (AudioTrack) | `fmod_audio.c`: thread que chama `fmodGetInfo`/`fmodProcess` e envia para `sceAudioOut` |
-| Controle OUYA / toque | `vita_pad.c`: controle virtual "PS Vita" via SDL GameController (botões, analógicos, touch traseiro); toque frontal via `onNativeTouch` |
-| Checagem de compra (OUYA trial) | `isPurchased()` retorna `true` |
+## Requirements
 
-Os dados do jogo (`assets/ant.mp3`, um zip de ~670MB sem compressão) são lidos
-pelo próprio jogo de dentro do APK: `dfNativeInit` recebe o caminho do APK,
-abre com `ZipArchive` e procura `assets/ant.mp3`. Por isso o APK é copiado
-inteiro, sem extrair nada.
+- A compatible original Costume Quest PowerVR APK, renamed to `game.apk`.
+- `kubridge.skprx` and `libshacccg.suprx` on the Vita.
+- For building: a **softfp VitaSDK** and its dependencies. The original
+  `armeabi-v7a` libraries use softfp; a hard-float SDK is not compatible.
 
-## Requisitos
+The original game data pack, game libraries, saves and translations are not
+included in the distribution.
 
-- [VitaSDK **softfp**](https://github.com/vitasdk-softfp) (GCC 10.3) — as libs
-  do APK são `armeabi-v7a` softfp. O VitaSDK hard-float em `~/vitasdk`
-  (GCC 15.2) **não** serve. A versão 1.0 também foi compilada com um SDK softfp
-  local no macOS; as instruções do OrbStack abaixo são uma alternativa.
-- No console: `kubridge.skprx` e `libshacccg.suprx` (compilador de shaders; o
-  jogo compila GLSL em tempo de execução).
+## Installation
 
-### Ambiente no macOS (OrbStack)
+Install the VPK using VitaShell and place your APK at:
 
-O SDK roda numa máquina Linux amd64 do OrbStack chamada `vitadev`, instalado
-em `~/vitasdk-softfp` dentro dela, com os pacotes `zlib`, `vitashark`,
-`SceShaccCgExt`, `libmathneon`, `kubridge` e `taihen` (via
-[vdpm softfp](https://github.com/vitasdk-softfp/vdpm)).
-
-## Build
-
-```bash
-./build-vita.sh
-```
-
-- `./build-vita.sh Release` → `build/costume_quest.vpk`: para jogar (otimizado,
-  só erros e relatório de crash no log).
-- `./build-vita.sh` → `build/costume_quest_debug.vpk`: log detalhado, bem mais
-  lento.
-- `./build-vita.sh Release fmod` → `build/costume_quest_fmod.vpk`: Release com
-  as bibliotecas debug do FMOD do APK (`libfmodexD`/`libfmodeventD`), que
-  registram os erros de áudio no `debug.log` (linhas `[FMOD]`).
-
-O heartbeat do log mostra FPS, tempo médio de quadro (jogo + espera na troca
-de buffer) e o pior quadro a cada 5 s.
-
-O vitaGL é compilado a partir de `lib/vitagl` com `SOFTFP_ABI=1`.
-
-## Instalação no Vita
-
-Basta copiar o APK original:
-
-```
+```text
 ux0:data/costumequest/
-└── game.apk     ← o CostumeQuestPowerVR.apk original, renomeado
+└── game.apk
 ```
 
-No primeiro boot o loader extrai `libCq.so`, `libfmodex.so` e
-`libfmodevent.so` de `lib/armeabi-v7a/` dentro do APK para a raiz de
-`ux0:data/costumequest/` (`source/apk_extract.c`, com checagem de CRC32).
-Nos boots seguintes elas já existem e a extração é pulada; para forçar de
-novo, apague as `.so` dessa pasta.
+This release uses the complete APK. The game reads `assets/ant.mp3`, its
+approximately 670 MB uncompressed data archive, directly from it.
 
-`libfmodexD.so`/`libfmodeventD.so` (debug) e `libfaad.so` não são usadas.
+On first launch, the loader extracts `libCq.so`, `libfmodex.so` and
+`libfmodevent.so` from `lib/armeabi-v7a/` in the APK, with CRC32 validation.
+Later launches reuse these files. The regular release does not use the
+FMOD debug libraries or `libfaad.so`.
 
-Também no primeiro boot o loader lê os 35 mil cabeçalhos do arquivo de dados
-do jogo (`assets/ant.mp3` dentro do APK) e grava `apk_index.bin` (~1,2 MB).
-Nos boots seguintes ele é carregado de uma vez e o jogo indexa os dados sem
-milhares de leituras pequenas no cartão (`source/apk_index.c`). Se o APK
-mudar, o índice é refeito sozinho.
+The loader also builds `apk_index.bin`, an approximately 1.2 MB index of
+35,000 local archive headers. Subsequent launches load this index instead of
+performing thousands of small card reads. The index is rebuilt if the APK changes.
 
-## Menu do port
+When updating, install over the existing application and keep your
+`ux0:data/costumequest/save/` directory, translations and shader cache.
+The application ID remains `CSTMQST01` and the Vita application version is `01.00`.
 
-**L + R + Start** abre o menu durante o jogo (o jogo fica pausado enquanto
-ele está aberto). Os rótulos do menu são em inglês:
+## Port menu
 
-- **FPS limit:** 60, 45, 30 ou sem limite. Padrão 30; vale na hora.
-- **Antialiasing (MSAA):** desligado, 2x ou 4x. Vale no próximo boot.
-- **Profiler (debug.log):** liga/desliga a medição das etapas do jogo.
-- **Controles:** cada botão do controle do jogo pode vir de qualquer botão do
-  Vita ou de um quadrante do touch traseiro.
-- **Restore default controls:** restaura apenas os mapeamentos.
+Press **L + R + Start** during gameplay. The game pauses while the menu is open.
+All port-menu labels are in English; the game's language is configured separately.
 
-Cima/Baixo escolhe, Esquerda/Direita (ou X) muda o valor, O ou Start fecha.
-Ao fechar, tudo é gravado no `config.txt`. O Start da combinação não chega ao
-jogo, então ela não abre também o pause do jogo.
+- **FPS limit:** 60, 45, 30 or Unlimited. Default: 30. Changes apply immediately.
+- **Antialiasing (MSAA):** Off, 2x or 4x. Default: Off. Restart to apply changes.
+- **Profiler (debug.log):** enable or disable stage timing diagnostics.
+- **Controls:** map each game input to a Vita button or rear-touch quadrant.
+- **Restore default controls:** reset button mappings only.
+- **Save and resume:** save settings and return to the game.
 
-O menu é desenhado pela CPU direto na tela (`source/port_menu.c`), sem passar
-pelo OpenGL do jogo.
+Use Up/Down to select, Left/Right or Cross to change, and Circle or Start to
+save and resume. The Start press used to open the port menu does not also
+open the game's pause menu. The menu is drawn directly into the framebuffer
+by the CPU, outside the game's OpenGL rendering.
 
-## Traduções
+## Settings
 
-O port carrega traduções de `ux0:data/costumequest/translations/<nome>/`
-quando o `config.txt` tem `language <nome>`. Com o padrão `auto`, se houver
-uma tradução em `translations/` ela é usada; senão vale o idioma do Vita. A pasta tem as tabelas de texto do jogo em texto puro
-(`costumequest.STbl`, `costumequestdlc1.STbl`, `cq1patch1.STbl`,
-`cqmobile.STbl`, `cqpc.STbl`); no boot elas são compactadas e entregues no
-lugar das tabelas em francês, e o jogo roda em francês
-(`source/translation.c`). Cada tabela precisa caber no espaço da francesa.
+`ux0:data/costumequest/config.txt` is created on first launch. Each line uses
+`key value`. Existing values are preserved when updating.
 
-Traduções de fãs feitas para o PC (patches xdelta dos `.~p` da Steam, como a
-PT-BR "Traducao_CQ+DLC_PTBR") viram essa pasta com o conversor, que extrai as
-tabelas dos patches sem precisar do jogo de PC e completa o que faltar com o
-inglês do APK:
-
-```bash
-brew install xdelta
-python3 extras/scripts/translation_from_pc.py <pasta da tradução> CostumeQuestPowerVR.apk translations/ptbr
-```
-
-Copie `translations/ptbr` para `ux0:data/costumequest/translations/ptbr`
-(com `language auto` é só isso; `language ptbr` força essa pasta). As fontes do jogo já têm todos os
-acentos do português. O texto gerado é da tradução e do jogo: fica com os
-seus arquivos, não vai para o repositório.
-
-## Configurações
-
-`ux0:data/costumequest/config.txt` (criado no primeiro boot), uma opção por
-linha no formato `chave valor`:
-
-| Chave | Valores | Padrão | Efeito |
+| Key | Values | Default | Effect |
 | --- | --- | --- | --- |
-| `msaa` | 0, 2, 4 | 0 | Antisserrilhado; 0 alivia a GPU. Vale no próximo boot |
-| `language` | auto, nome de pasta | auto | `auto`: a tradução em `translations/`, se houver, senão o idioma do Vita; `ptbr` (ou outro nome): tradução em `translations/<nome>/`. Vale no próximo boot |
-| `controls` | gamepad, touch | gamepad | `gamepad`: interface e combate no modo controle do jogo, com ícones de botões PlayStation; `touch`: a interface de toque do Android. Vale no próximo boot |
-| `allocator` | fast, newlib | fast | `fast`: alocador de blocos pequenos para o jogo (Lua, partículas…); `newlib`: malloc padrão. Vale no próximo boot |
-| `lua_gcpause`, `lua_gcstepmul` | 50–1000 | 200, 180 | Coletor de lixo do Lua. O jogo original usa pause 0 (o coletor nunca para, e isso custava boa parte do tempo das missões); o port troca por 200, o padrão do Lua. Vale no próximo boot |
-| `profiler` | 0, 1, 2 | 0 | 1: mede as etapas do quadro (marcadores do motor) no `debug.log`; 2: também cada chamada Lua (deixa o jogo bem mais lento) |
-| `fps_cap` | 60, 45, 30, 0 | 30 | Limite de FPS. 60 e 30 travados no vsync (1 ou 2 refreshes por quadro); 45 e 0 (sem limite) sem vsync |
-| `particle_leaves` | 0, 1 | 1 | Preparação gradual das folhas ambientais; 0 restaura a preparação contínua no próximo boot |
+| `fps_cap` | 60, 45, 30, 0 | 30 | Frame limit. 60 and 30 use vsync intervals of one and two refreshes; 45 and 0 use no vsync. |
+| `msaa` | 0, 2, 4 | 0 | Antialiasing. 0 reduces GPU load. Restart required. |
+| `profiler` | 0, 1, 2 | 0 | 1 records engine stage timings; 2 also profiles every Lua call and is significantly slower. |
+| `particle_leaves` | 0, 1 | 1 | Gradual preparation of ambient leaves. 0 restores continuous native preparation after restarting. |
+| `language` | auto, folder name | auto | Use a translation in `translations/`, or the Vita language if none is available. A folder name selects that translation explicitly. Restart required. |
+| `controls` | gamepad, touch | gamepad | PlayStation controller interface or the Android touch interface. Restart required. |
+| `allocator` | fast, newlib | fast | Small-block allocator for Lua and particles, or standard malloc. Restart required. |
+| `lua_gcpause`, `lua_gcstepmul` | 50–1000 | 200, 180 | Lua garbage collector settings. The port replaces the game's pause value of 0 with 200. Restart required. |
 
-## Controles
+If updating from a diagnostic build, set Profiler to Off in the port menu
+for normal play. For the release video settings, select FPS limit 30 and MSAA Off.
 
-O Vita aparece para o jogo como um controle (SDL GameController), com
-analógicos de verdade. Padrão:
+## Controls
 
-| Controle (Xbox) | Vita |
+The Vita appears to the game as an SDL GameController, including both analog
+sticks. Default mappings use the following internal game inputs:
+
+| Game input | Vita input |
 | --- | --- |
 | A / B / X / Y | Cross / Circle / Square / Triangle |
 | Back / Start | Select / Start |
 | LB / RB | L / R |
-| LT / RT | Touch traseiro, quadrante superior esquerdo / direito |
-| L3 / R3 | Touch traseiro, quadrante inferior esquerdo / direito |
-| D-pad, analógicos | D-pad, analógicos |
+| LT / RT | Rear touch: upper-left / upper-right quadrant |
+| L3 / R3 | Rear touch: lower-left / lower-right quadrant |
+| D-pad and analog sticks | D-pad and analog sticks |
 
-**Modo console (`controls gamepad`):**
-o jogo traz o caminho de console de todas as telas (o mesmo da versão OUYA),
-escolhido por `VirtualGamepadManager::m_bIsGamepad`. O port mantém esse modo
-ligado e, quando o jogo lê do APK a biblioteca de ícones
-`Mobile_InputIcons.gfx` (para onde vão todos os imports de
-`Shared/ControllerIcons.swf`), entrega no lugar uma versão com os botões
-PlayStation (`BUTTON_A`, `BUTTON_DPad*`…) e os símbolos de toque
-(`SPECIAL_*`, `MINIGAME_*`…), montada no boot só com referências às texturas
-que já estão no APK. A variante desta revisão é `build/costume_quest_console.vpk`
-(`./build-vita.sh Release console`). O toque frontal fica disponível como alternativa nesse modo;
-o touch traseiro continua disponível para LT/RT/L3/R3.
-Nos minigames, os botões e o direcional usam o estado já processado pelo jogo;
-prompts direcionais também aceitam movimentos do analógico esquerdo.
-O minigame de movimento contínuo usa deslocamentos do analógico esquerdo
-na escala nativa: entrar na ação ou segurar uma direção não carrega a barra.
-Veja o [mapeamento completo de combate](docs/controles-console.md#comandos-de-combate).
-Pressionar e repetir continuam exigindo novas pressões, inclusive nas barras
-de timing. `controls touch` seleciona a interface Android no próximo boot.
-Os ícones embutidos nas interações, nos diálogos, no caderno e na confirmação
-Sim/Não também usam as texturas originais de PS3, inclusive nas telas do DLC.
-O X das interações conserva o tamanho previsto para o botão original. A seleção
-de fantasias também usa PS3 nas referências de controle da biblioteca PC_Keys.
-No caderno, o analógico esquerdo rola as missões ativas e o direito as concluídas;
-as barras e o arraste das páginas por toque também estão disponíveis.
-Na confirmação de fuga, X confirma e círculo cancela (mapeamento padrão);
-o toque funciona como alternativa. Enquanto o modal está aberto, os comandos
-não chegam ao combate. Segurar o comando de fuga não empilha confirmações nem
-reabre a janela antes de soltar os botões.
-As mensagens do Flash
-(Scaleform) vão para o `debug.log` (`flash[...]`).
+The interface displays PlayStation prompts in gamepad mode. Front touch remains
+available as an alternative, and rear touch provides the extra controller inputs.
 
-Remapeável no `config.txt` com `map_a`, `map_b`, `map_x`, `map_y`,
-`map_back`, `map_start`, `map_lb`, `map_rb`, `map_lt`, `map_rt`, `map_l3`,
-`map_r3`, `map_guide`, usando: `cross circle square triangle start select l r
-up down left right rear_tl rear_tr rear_bl rear_br none`. Exemplo para
-confirmar com Circle: `map_a circle` e `map_b cross`.
+The controller mode uses the engine's console interface through
+`VirtualGamepadManager::m_bIsGamepad`. The loader supplies a replacement
+`Mobile_InputIcons.gfx` library for `Shared/ControllerIcons.swf` imports,
+referencing the PlayStation and touch textures already present in the APK.
+No additional controller artwork is required.
 
-## Debug
+Battle minigames use the controller state already processed by the game.
+Directional prompts also accept left-stick movement. Continuous-motion actions
+use actual left-stick displacement; simply entering the action or holding a
+direction does not charge the bar. Repeated-press actions still require new
+presses, including timing bars. See the [combat mapping and audit](docs/controles-console.md#comandos-de-combate)
+for additional technical details in Portuguese.
 
-Cada execução grava `ux0:data/costumequest/debug.log`; a anterior fica em
-`debug.prev.log`. O log recebe o loader, o `__android_log_print` do jogo,
-FalsoJNI e so_util, com o tempo em ms desde o início. Se o jogo crashar, o
-handler de exceção do kubridge acrescenta um relatório com PC/LR já traduzidos
-para `libCq.so+offset (símbolo)`, registradores e endereços de código na pilha.
-Builds Debug registram tudo; Release só erros e o relatório de crash.
+PlayStation prompts also cover interactions, costume selection, notebook
+symbols and Yes/No dialogs, including DLC interface variants. Interaction
+icons use the corrected size. In the notebook, the left stick scrolls active
+quests and the right stick scrolls completed quests; scrollbar and page-drag
+touch paths are also supported.
 
-Diagnósticos pesados, desligados por padrão (deixam o jogo bem mais lento):
+For escape confirmation, Cross confirms and Circle cancels with the default
+mapping. Front touch is an alternative. Combat input is blocked while the
+dialog is open, and holding the escape command does not stack or immediately
+reopen confirmation dialogs.
 
-- `-DHEAPGUARD=ON`: guarda todas as alocações do processo (canário, quarentena
-  de blocos liberados, varredura do heap a cada segundo) e loga o dono do
-  bloco que estourou.
-- `-DGL_TRACE=ON`: loga quais threads chamam GL e de qual função do jogo.
-- `-DGL_CENSUS=ON`: loga cada formato de textura e layout de vértice distinto.
+Mappings can also be changed in `config.txt` with `map_a`, `map_b`, `map_x`,
+`map_y`, `map_back`, `map_start`, `map_lb`, `map_rb`, `map_lt`, `map_rt`,
+`map_l3`, `map_r3` and `map_guide`. Available sources are:
 
-## Shaders
+```text
+cross circle square triangle start select l r
+up down left right rear_tl rear_tr rear_bl rear_br none
+```
 
-O jogo compila GLSL em tempo de execução (~1 s por shader no Vita). O vitaGL
-guarda os shaders compilados em `ux0:data/shader_cache/CSTMQST01/`, então só
-a primeira vez que cada shader aparece é lenta.
+For example, `map_a circle` and `map_b cross` swap confirm and cancel.
 
-## Limitações e escopo de validação
+## Translations
 
-- **Testado em hardware:** exploração, rolagem do caderno e desempenho foram
-  acompanhados por capturas e logs do usuário. Isso não comprova uma campanha
-  completa nem todos os cenários do DLC.
-- **Memória:** o OUYA tinha 1GB; o Vita tem bem menos. Texturas e áudio podem
-  estourar o heap (`_newlib_heap_size_user` em `main.c`, memória do vitaGL em
-  `gl_init`).
-- **Carregamentos:** transições e primeira compilação de shaders ainda podem
-  causar pausas. As folhas ambientais atingem sua densidade gradualmente nos
-  primeiros segundos, reduzindo os picos de preparação.
-- **Controles:** o caminho SDL e os imports de ícones foram verificados contra
-  este APK, com testes locais da ponte de input. A cobertura de todas as telas,
-  fantasias e habilidades precisa de teste no Vita; compilação não comprova
-  funcionamento integral. Veja [a auditoria e o roteiro](docs/controles-console.md).
-- **Saves:** o jogo grava em `/sdcard/dfp/cq-droid/_write`; o loader
-  redireciona só essa pasta para `ux0:data/costumequest/save/`
-  (`source/reimpl/io.c`). O resto de `/sdcard` continua inexistente, como o
-  jogo espera.
-- O APK foi reempacotado por terceiros (classes Java ofuscadas injetadas, ex.
-  `C0001`, `MobileLinkQualityInfo`). Isso não afeta o lado nativo, mas o ideal
-  é usar um APK original.
+Place translation tables in `ux0:data/costumequest/translations/<name>/`.
+With `language auto`, the port uses an available translation folder, otherwise
+the Vita language. `language ptbr`, for example, explicitly selects `translations/ptbr/`.
+
+Supported plain-text tables are `costumequest.STbl`, `costumequestdlc1.STbl`,
+`cq1patch1.STbl`, `cqmobile.STbl` and `cqpc.STbl`. At boot, the loader compresses
+them and serves them in place of the French tables while selecting the French
+language internally. Each replacement must fit within the original table's
+space in the APK. This internal language selection is separate from the
+translation text and the English port menu.
+
+The converter can extract tables from PC fan-translation xdelta patches and
+fill missing strings from the APK's English tables:
+
+```sh
+brew install xdelta
+python3 extras/scripts/translation_from_pc.py <translation-folder> CostumeQuestPowerVR.apk translations/ptbr
+```
+
+Copy the resulting `translations/ptbr` folder to the Vita. The game's fonts
+already support Portuguese accents. Generated translation text remains with
+your local game files and is not included in this repository.
+
+## Building
+
+The 1.0 release was built with a local softfp VitaSDK on macOS. Install the SDK
+and dependencies including zlib, vitashark, SceShaccCgExt, libmathneon,
+kubridge and taihen.
+
+Use a source path without spaces, or a symlink to one, because of the SDK's
+VPK packager:
+
+```sh
+export VITASDK=/path/to/vitasdk-softfp
+export PATH="$VITASDK/bin:$PATH"
+export CPATH="$(pwd)/lib/vitagl/source${CPATH:+:$CPATH}"
+cmake -S . -B /tmp/cq-release-build -DCMAKE_BUILD_TYPE=Release \
+  -DFMOD_DEBUG=OFF -DHEAPGUARD=OFF -DGL_TRACE=OFF -DGL_CENSUS=OFF
+cmake --build /tmp/cq-release-build -j4
+```
+
+Recent CMake versions may require `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` for
+supporting libraries. vitaGL is built from the vendored `lib/vitagl` sources
+with `SOFTFP_ABI=1`.
+
+Alternatively, `build-vita.sh` builds through an OrbStack Linux amd64 machine
+named `vitadev`, with the SDK installed in `~/vitasdk-softfp`:
+
+```sh
+./build-vita.sh Release
+```
+
+- `./build-vita.sh Release`: optimized VPK for normal play.
+- `./build-vita.sh`: Debug VPK with additional, slower logging.
+- `./build-vita.sh Release fmod`: Release using the APK's FMOD debug libraries
+  for audio diagnostics. Their messages appear as `[FMOD]` in `debug.log`.
+
+## Diagnostics
+
+Each run writes `ux0:data/costumequest/debug.log`; the previous run is retained
+as `debug.prev.log`. It includes startup information, game logging and
+Scaleform messages. With profiling enabled, heartbeat records include FPS,
+mean frame time, the worst frame and engine stage timings.
+
+Normal log writes use a bounded asynchronous queue. On a crash, the kubridge
+exception handler writes a direct report with registers, stack code addresses
+and PC/LR translated into `libCq.so+offset (symbol)` form.
+
+Heavy diagnostics are disabled by default:
+
+- `-DHEAPGUARD=ON`: allocation guards, quarantine and heap scans.
+- `-DGL_TRACE=ON`: calling threads and origins for OpenGL calls.
+- `-DGL_CENSUS=ON`: distinct texture formats and vertex layouts.
+
+The particle capture analyzer is available at `extras/analyze-particle-trace.py`.
+
+## Shaders and performance
+
+vitaGL caches compiled shaders in `ux0:data/shader_cache/CSTMQST01/`.
+The first appearance of an uncached shader can be slow; keeping the cache
+avoids recompilation on later runs.
+
+The release includes a corrected particle-preparation clamp, gradual settling
+for ambient leaves, independent file-cache waits and asynchronous logging.
+Ambient leaves initially appear less dense while preparation is distributed
+across frames. Initial loading and scene transitions can still pause for
+several seconds.
+
+## Validation scope and limitations
+
+- Exploration, notebook scrolling and performance were checked on a Vita using
+  user-provided screenshots and logs. This does not establish full-campaign
+  or all-DLC coverage.
+- Some costumes, abilities and interface paths still require broader hardware
+  coverage. Local build and regression tests do not establish complete gameplay coverage.
+- Memory remains limited compared with the original OUYA environment. Large
+  textures and audio can exhaust available memory.
+- Saves are redirected from `/sdcard/dfp/cq-droid/_write` to
+  `ux0:data/costumequest/save/`. The remaining `/sdcard` paths stay unavailable,
+  as expected by the game.
+
+## Implementation overview
+
+| Android component | Vita implementation |
+| --- | --- |
+| Native game and FMOD libraries | Extracted from the APK and loaded at 0x98C10000, 0x98010000 and 0x98810000 respectively; imports are resolved between modules. |
+| Activity initialization | `dfNativeSetLanguage`, `dfNativeInit`, `setDeviceInfo`, `onNativeResize(960x544)` and `nativeInit()` on a thread with a 4 MB stack. |
+| SDL EGL and window operations | `patch.c` bridges the Android backend to vitaGL. |
+| Android file access | File hooks bridge to Vita stdio; the game reads its archive through the APK path. |
+| AudioTrack | `fmod_audio.c` submits the FMOD audio stream to `sceAudioOut`. |
+| OUYA controller and touch input | SDL GameController for buttons, sticks and rear touch; Android-style events for front touch. |
+
+## License
+
+See [LICENSE](LICENSE) for the port license and [third-party notices](docs/NOTICE.md)
+for library licensing. The matching vendored sources are included in the source distribution.
