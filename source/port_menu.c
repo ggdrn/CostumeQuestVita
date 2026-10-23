@@ -104,39 +104,39 @@ static const int msaa_values[] = { 0, 2, 4 };
 
 // Game controller input -> what it does in Costume Quest
 static const struct { const char *key, *label; } map_labels[] = {
-    { "a",     "A  (confirmar / pular)" },
-    { "b",     "B  (voltar)" },
-    { "x",     "X" },
-    { "y",     "Y" },
-    { "back",  "Back" },
-    { "start", "Start (pausa)" },
-    { "lb",    "LB" },
-    { "rb",    "RB" },
-    { "lt",    "LT" },
-    { "rt",    "RT" },
+    { "a",     "Cross (confirm / jump)" },
+    { "b",     "Circle (back)" },
+    { "x",     "Square" },
+    { "y",     "Triangle" },
+    { "back",  "Select" },
+    { "start", "Start (pause)" },
+    { "lb",    "L1" },
+    { "rb",    "R1" },
+    { "lt",    "L2" },
+    { "rt",    "R2" },
     { "l3",    "L3" },
     { "r3",    "R3" },
-    { "guide", "Guide" },
+    { "guide", "PS" },
 };
 
 static const struct { const char *name, *label; } source_labels[] = {
-    { "none",     "nenhum" },
-    { "cross",    "X (cross)" },
-    { "circle",   "O (circle)" },
-    { "square",   "Quadrado" },
-    { "triangle", "Triangulo" },
+    { "none",     "None" },
+    { "cross",    "Cross" },
+    { "circle",   "Circle" },
+    { "square",   "Square" },
+    { "triangle", "Triangle" },
     { "start",    "Start" },
     { "select",   "Select" },
     { "l",        "L" },
     { "r",        "R" },
-    { "up",       "Cima" },
-    { "down",     "Baixo" },
-    { "left",     "Esquerda" },
-    { "right",    "Direita" },
-    { "rear_tl",  "Traseiro sup. esq." },
-    { "rear_tr",  "Traseiro sup. dir." },
-    { "rear_bl",  "Traseiro inf. esq." },
-    { "rear_br",  "Traseiro inf. dir." },
+    { "up",       "Up" },
+    { "down",     "Down" },
+    { "left",     "Left" },
+    { "right",    "Right" },
+    { "rear_tl",  "Rear upper left" },
+    { "rear_tr",  "Rear upper right" },
+    { "rear_bl",  "Rear lower left" },
+    { "rear_br",  "Rear lower right" },
 };
 
 static const char *map_label(int i) {
@@ -206,7 +206,7 @@ static void render(int sel) {
     int top = 14;
     fill_rect(x - 16, top - 8, w + 32, fb_h - 2 * (top - 8), 0xD0101010);
 
-    draw_text(x, top, COL_TITLE, "COSTUME QUEST - MENU DO PORT");
+    draw_text(x, top, COL_TITLE, "COSTUME QUEST - PORT MENU");
     int y = top + LINE_H + 8;
 
     for (int i = 0; i < item_count; i++) {
@@ -215,24 +215,24 @@ static void render(int sel) {
         value[0] = 0;
         switch (it->type) {
             case ITEM_FPS:
-                label = "Limite de FPS";
+                label = "FPS limit";
                 if (setting_fps_cap)
                     snprintf(value, sizeof(value), "< %d >", setting_fps_cap);
                 else
-                    snprintf(value, sizeof(value), "< sem limite >");
+                    snprintf(value, sizeof(value), "< Unlimited >");
                 break;
             case ITEM_MSAA:
                 label = "Antialiasing (MSAA)";
                 snprintf(value, sizeof(value), "< %s >%s",
-                         setting_msaa == 0 ? "desligado" : setting_msaa == 2 ? "2x" : "4x",
+                         setting_msaa == 0 ? "Off" : setting_msaa == 2 ? "2x" : "4x",
                          setting_msaa != msaa_at_boot ? " *" : "");
                 break;
             case ITEM_PROFILER:
-                label = "Profiler no debug.log";
-                snprintf(value, sizeof(value), "< %s >", setting_profiler ? "ligado" : "desligado");
+                label = "Profiler (debug.log)";
+                snprintf(value, sizeof(value), "< %s >", setting_profiler ? "On" : "Off");
                 break;
             case ITEM_HEADER:
-                draw_text(x, y + 4, COL_TITLE, "Controles (botao do jogo <- botao do Vita)");
+                draw_text(x, y + 4, COL_TITLE, "Controls (game input <- Vita button)");
                 y += LINE_H + 4;
                 continue;
             case ITEM_MAP:
@@ -240,10 +240,10 @@ static void render(int sel) {
                 snprintf(value, sizeof(value), "< %s >", source_label(vita_pad_map_get(it->map)));
                 break;
             case ITEM_RESET:
-                label = "Restaurar controles padrao";
+                label = "Restore default controls";
                 break;
             case ITEM_CLOSE:
-                label = "Salvar e voltar ao jogo";
+                label = "Save and resume";
                 break;
         }
         if (i == sel)
@@ -256,8 +256,8 @@ static void render(int sel) {
     }
 
     const char *hint = setting_msaa != msaa_at_boot
-        ? "* MSAA muda ao reiniciar o jogo"
-        : "Cima/Baixo: escolher  Esq/Dir: mudar  X: ok  O: voltar";
+        ? "* Restart the game to apply MSAA changes"
+        : "Up/Down: select  Left/Right: change  X: OK  O: back";
     draw_text(x, fb_h - top - LINE_H, COL_DIM, hint);
 }
 

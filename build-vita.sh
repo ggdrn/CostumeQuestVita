@@ -1,20 +1,27 @@
 #!/bin/bash
 # Builds the VPK on macOS through the OrbStack Linux machine "vitadev",
-# which has the softfp VitaSDK in ~/vitasdk-softfp (no macOS build exists).
+# which has the softfp VitaSDK in ~/vitasdk-softfp. A local softfp SDK can
+# alternatively build the project directly with CMake; see docs/release-1.0.0.md.
 #
 #   ./build-vita.sh            # Debug (logs enabled) -> build/costume_quest_debug.vpk
 #   ./build-vita.sh Release    # for playing        -> build/costume_quest.vpk
 #   ./build-vita.sh Release fmod  # + FMOD debug libs (audio issues) -> build/costume_quest_fmod.vpk
 #
-# On the feat_controles branch the VPK is build/costume_quest_controls.vpk.
+# On feature branches the VPK is build/costume_quest_<feature>.vpk (feat_controles -> _controls).
 
 set -e
 
 BUILD_TYPE="${1:-Debug}"
 VARIANT="${2:-}"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -z "$VARIANT" ] && [ "$(git -C "$SRC_DIR" branch --show-current 2>/dev/null)" = "feat_controles" ]; then
-  VARIANT=controls
+# Feature branches get their own VPK: feat_controles -> costume_quest_controls.vpk,
+# feat_<name> -> costume_quest_<name>.vpk
+BRANCH="$(git -C "$SRC_DIR" branch --show-current 2>/dev/null)"
+if [ -z "$VARIANT" ]; then
+  case "$BRANCH" in
+    feat_controles) VARIANT=controls ;;
+    feat_*) VARIANT="${BRANCH#feat_}" ;;
+  esac
 fi
 
 orb -m vitadev bash -s -- "$SRC_DIR" "$BUILD_TYPE" "$VARIANT" <<'EOF'

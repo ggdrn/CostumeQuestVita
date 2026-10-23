@@ -11,6 +11,8 @@
  * unbuffered 2-4 byte read() calls. Cheap syscalls on Android, but every
  * sceIoRead goes to the memory card on Vita. read()/lseek() on read-only fds
  * are served from a per-fd buffer instead.
+ * Cache table synchronization never waits for file IO: operations pin their
+ * cache before taking its private lock, and close waits for those pins to drain.
  */
 
 #ifndef SOLOADER_FDCACHE_H
@@ -41,8 +43,8 @@ extern FdCacheStats fdcache_stats;
 // The fd is the APK: reads inside zip local headers come from apk_index
 void fdcache_mark_apk(int fd);
 
-// Reads of the APK in [offset, offset + len) return data instead (set once, before the game runs)
-void fdcache_set_apk_overlay(uint32_t offset, const void *data, uint32_t len);
+// Reads of the APK in [offset, offset + len) return data instead (before the game runs); 0 on success
+int fdcache_set_apk_overlay(uint32_t offset, const void *data, uint32_t len);
 
 void fdcache_attach(int fd);
 

@@ -6,6 +6,7 @@
  */
 
 #include "reimpl/controls.h"
+#include "utils/settings.h"
 
 #include <math.h>
 #include <psp2/ctrl.h>
@@ -37,7 +38,7 @@ void coord_normalize(float * x, float * y, float deadzone) {
 void controls_init() {
     // Enable analog sticks and touchscreen
     sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG_WIDE);
-    sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, 1);
+    sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START);
 
     // Enable accelerometer
     sceMotionStartSampling();
@@ -51,7 +52,7 @@ void poll_stick(ControlsStickId which, float raw_x, float raw_y, float * reading
 
 void controls_poll() {
     poll_touch();
-    poll_pad();
+    // Buttons and axes are sampled by vita_pad.c through SDL.
     //poll_accel();
 }
 
@@ -59,7 +60,8 @@ SceTouchData touch;
 SceTouchData touch_old;
 
 void poll_touch() {
-    sceTouchPeek(SCE_TOUCH_PORT_FRONT, &touch, 1);
+    if (sceTouchPeek(SCE_TOUCH_PORT_FRONT, &touch, 1) <= 0)
+        return;
 
     for (int i = 0; i < touch.reportNum; i++) {
         float x = (float) touch.report[i].x * 960.f / 1920.0f;

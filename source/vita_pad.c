@@ -121,7 +121,10 @@ void vita_pad_save_mapping(void *file) {
 int vita_pad_map_count() { return MAP_NUM; }
 const char *vita_pad_map_key(int i) { return mapping[i].key + 4; } // without "map_"
 int vita_pad_map_get(int i) { return mapping[i].src; }
-void vita_pad_map_set(int i, int src) { mapping[i].src = (PadSource)src; }
+void vita_pad_map_set(int i, int src) {
+    if (i >= 0 && i < MAP_NUM && src >= 0 && src < SRC_NUM)
+        mapping[i].src = (PadSource)src;
+}
 int vita_pad_source_count() { return SRC_NUM; }
 const char *vita_pad_source_name(int src) { return src_names[src]; }
 
@@ -135,18 +138,27 @@ void vita_pad_reset_mapping() {
  * separately each frame)
  */
 
-static SceCtrlData pad;
+static SceCtrlData pad = { .lx = 128, .ly = 128, .rx = 128, .ry = 128 };
+static int snapshot_active;
+static void (*orig_update_controller)(void *device);
 static uint8_t rear[4]; // TL, TR, BL, BR quadrants touched
 static uint64_t last_read = 0;
 static int rear_enabled = 0;
 
 static void read_state() {
     uint64_t now = sceKernelGetProcessTimeWide();
-    if (now - last_read < 2000)
+    if (snapshot_active || (last_read && now - last_read < 2000))
         return;
     last_read = now;
 
-    sceCtrlPeekBufferPositiveExt2(0, &pad, 1);
+    SceCtrlData next = { .lx = 128, .ly = 128, .rx = 128, .ry = 128 };
+    if (sceCtrlPeekBufferPositiveExt2(0, &next, 1) <= 0) {
+        memset(&pad, 0, sizeof(pad));
+        pad.lx = pad.ly = pad.rx = pad.ry = 128;
+        memset(rear, 0, sizeof(rear));
+        return;
+    }
+    pad = next;
 
     if (!rear_enabled) {
         sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, SCE_TOUCH_SAMPLING_STATE_START);
@@ -165,7 +177,7 @@ static void read_state() {
 }
 
 static int source_pressed(PadSource src) {
-    if (src == SRC_NONE)
+    if (src <= SRC_NONE || src >= SRC_NUM)
         return 0;
     if (src >= SRC_REAR_TL)
         return rear[src - SRC_REAR_TL];
@@ -221,7 +233,7 @@ static const char *ControllerName(void *handle) {
 static void JoystickClose(void *joy) {}
 
 static int16_t stick_axis(uint8_t v) {
-    int a = ((int)v - 128) * 256;
+    int a = v < 128 ? ((int)v - 128) * 256 : ((int)v - 128) * 32767 / 127;
     if (a > 32767)
         a = 32767;
     return (int16_t)a;
@@ -255,6 +267,15 @@ static uint8_t GameControllerGetButton(void *gc, int button) {
     }
 }
 
+// One coherent hardware sample for all axes/buttons of this engine update.
+static void update_controller_hook(void *device) {
+    last_read = 0;
+    read_state();
+    snapshot_active = 1;
+    orig_update_controller(device);
+    snapshot_active = 0;
+}
+
 static void hook(const char *symbol, void *dst) {
     uintptr_t addr = so_symbol(&so_mod, symbol);
     if (!addr) {
@@ -266,6 +287,11 @@ static void hook(const char *symbol, void *dst) {
 
 void vita_pad_patch() {
     sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG_WIDE);
+    uintptr_t update = so_symbol(&so_mod, "_ZN10SDLGamepad32UpdateDeviceState_GameControllerEv");
+    if (update)
+        orig_update_controller = (void *)hook_arm_trampoline(&so_mod, update, (uintptr_t)update_controller_hook);
+    if (!orig_update_controller)
+        l_error("vita_pad: coherent controller sampling hook unavailable");
 
     hook("SDL_NumJoysticks", NumJoysticks);
     hook("SDL_IsGameController", IsGameController);

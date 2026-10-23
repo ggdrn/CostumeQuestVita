@@ -56,6 +56,9 @@ typedef struct {
     int ahead;         // size of the next sequential fetch
     int is_apk;        // serve local header reads from apk_index
     SceKernelLwMutexWork lock;
+    unsigned users;   // includes readers waiting for lock; guarded by table_lock
+    int closing;
+    SceUID drained;
 } FdCache;
 
 static FdCache *caches[FDCACHE_MAX_FD];
@@ -63,13 +66,17 @@ static FdCache *caches[FDCACHE_MAX_FD];
 // Guards `caches`: a fd closed on one thread while another reads it must not
 // free the cache under the reader
 static SceKernelLwMutexWork table_lock;
-static volatile int table_lock_ready = 0;
+static volatile int table_lock_ready = 0; // 0=new, 1=initializing, 2=ready
 
 static void table_lock_get() {
-    if (!table_lock_ready) {
+    if (__sync_bool_compare_and_swap(&table_lock_ready, 0, 1)) {
         sceKernelCreateLwMutex(&table_lock, "fdcache_tbl", 0, 0, NULL);
-        table_lock_ready = 1;
+        __sync_synchronize();
+        table_lock_ready = 2;
     }
+    while (table_lock_ready != 2)
+        sceKernelDelayThread(100);
+    __sync_synchronize();
     sceKernelLockLwMutex(&table_lock, 1, NULL);
 }
 
@@ -92,19 +99,51 @@ void fdcache_attach(int fd) {
     for (int i = 0; i < FDCACHE_BLOCKS; i++)
         c->blocks[i].start = -1;
     c->pos = lseek(fd, 0, SEEK_CUR);
-    sceKernelCreateLwMutex(&c->lock, "fdcache", 0, 0, NULL);
+    if (sceKernelCreateLwMutex(&c->lock, "fdcache", 0, 0, NULL) < 0) {
+        free(c);
+        return;
+    }
+    c->drained = sceKernelCreateSema("fdcache_drain", 0, 0, 1, NULL);
+    if (c->drained < 0) {
+        sceKernelDeleteLwMutex(&c->lock);
+        free(c);
+        return;
+    }
     table_lock_get();
     caches[fd] = c;
     table_lock_put();
 }
 
-static uint32_t overlay_off, overlay_len;
-static const uint8_t *overlay_data;
+// APK ranges whose bytes the port replaces (set before the game runs)
+#define MAX_OVERLAYS 16
+typedef struct {
+    uint32_t off, len;
+    const uint8_t *data;
+} Overlay;
+static Overlay overlays[MAX_OVERLAYS];
+static int overlay_count;
 
-void fdcache_set_apk_overlay(uint32_t offset, const void *data, uint32_t len) {
-    overlay_off = offset;
-    overlay_data = data;
-    overlay_len = len;
+int fdcache_set_apk_overlay(uint32_t offset, const void *data, uint32_t len) {
+    if (overlay_count >= MAX_OVERLAYS || !len)
+        return -1;
+    for (int i = 0; i < overlay_count; i++)
+        if (offset < overlays[i].off + overlays[i].len && overlays[i].off < offset + len)
+            return -1; // overlapping
+    overlays[overlay_count++] = (Overlay){ offset, len, data };
+    return 0;
+}
+
+// The overlay covering pos, else the distance to the next one (in *gap; 0 = none)
+static const Overlay *overlay_at(off_t pos, off_t *gap) {
+    *gap = 0;
+    for (int i = 0; i < overlay_count; i++) {
+        const Overlay *o = &overlays[i];
+        if (pos >= o->off && pos < (off_t)o->off + o->len)
+            return o;
+        if (o->off > pos && (*gap == 0 || o->off - pos < *gap))
+            *gap = o->off - pos;
+    }
+    return NULL;
 }
 
 void fdcache_mark_apk(int fd) {
@@ -123,15 +162,17 @@ void fdcache_detach(int fd) {
     table_lock_get();
     FdCache *c = caches[fd];
     caches[fd] = NULL;
-    if (c) {
-        // Wait for a reader still inside this cache
-        sceKernelLockLwMutex(&c->lock, 1, NULL);
-        sceKernelUnlockLwMutex(&c->lock, 1);
-    }
+    int wait = c && c->users;
+    if (c)
+        c->closing = 1;
     table_lock_put();
     if (!c)
         return;
 
+    // Wait outside the global table lock, including queued readers that pinned c.
+    if (wait)
+        sceKernelWaitSema(c->drained, 1, NULL);
+    sceKernelDeleteSema(c->drained);
     sceKernelDeleteLwMutex(&c->lock);
     for (int i = 0; i < FDCACHE_BLOCKS; i++)
         free(c->blocks[i].buf);
@@ -145,9 +186,20 @@ static FdCache *get_cache_locked(int fd) {
     table_lock_get();
     FdCache *c = caches[fd];
     if (c)
-        sceKernelLockLwMutex(&c->lock, 1, NULL);
+        ++c->users;
     table_lock_put();
+    // A slow read or a queued reader must not stop unrelated file descriptors.
+    if (c)
+        sceKernelLockLwMutex(&c->lock, 1, NULL);
     return c;
+}
+
+static void put_cache(FdCache *c) {
+    sceKernelUnlockLwMutex(&c->lock, 1);
+    table_lock_get();
+    if (--c->users == 0 && c->closing)
+        sceKernelSignalSema(c->drained, 1);
+    table_lock_put();
 }
 
 static ssize_t timed_pread(int fd, void *buf, size_t count, off_t offset) {
@@ -233,17 +285,19 @@ ssize_t read_soloader(int fd, void *buf, size_t count) {
     while (done < count) {
         size_t want = count - done;
         // File data replaced by the port: never the card's bytes
-        if (c->is_apk && overlay_len) {
-            off_t ov_end = (off_t)overlay_off + overlay_len;
-            if (c->pos >= overlay_off && c->pos < ov_end) {
-                size_t n = ov_end - c->pos < (off_t)want ? (size_t)(ov_end - c->pos) : want;
-                memcpy((uint8_t *)buf + done, overlay_data + (c->pos - overlay_off), n);
+        if (c->is_apk && overlay_count) {
+            off_t gap;
+            const Overlay *o = overlay_at(c->pos, &gap);
+            if (o) {
+                off_t end = (off_t)o->off + o->len;
+                size_t n = end - c->pos < (off_t)want ? (size_t)(end - c->pos) : want;
+                memcpy((uint8_t *)buf + done, o->data + (c->pos - o->off), n);
                 done += n;
                 c->pos += n;
                 continue;
             }
-            if (c->pos < overlay_off && c->pos + (off_t)want > overlay_off)
-                want = overlay_off - c->pos;
+            if (gap && gap < (off_t)want)
+                want = gap;
         }
         // Big reads go straight to the card
         if (want >= FDCACHE_BLOCK_SIZE) {
@@ -269,7 +323,7 @@ ssize_t read_soloader(int fd, void *buf, size_t count) {
     }
 
     fdcache_stats.last_pos = c->pos;
-    sceKernelUnlockLwMutex(&c->lock, 1);
+    put_cache(c);
 
     fdcache_stats.bytes += done;
     return done;
@@ -302,6 +356,6 @@ off_t lseek_soloader(int fd, off_t offset, int whence) {
         l_warn("lseek(%i, %li, %i): invalid offset", fd, (long)offset, whence);
 
     fdcache_stats.last_pos = c->pos;
-    sceKernelUnlockLwMutex(&c->lock, 1);
+    put_cache(c);
     return ret < 0 ? -1 : ret;
 }
